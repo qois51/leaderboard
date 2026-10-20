@@ -4,7 +4,6 @@ const { put, list } = require('@vercel/blob');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 
@@ -16,8 +15,6 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_PASSPHRASE = 'qoisganteng123';
-const DATA_DIR = path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'leaderboard.json');
 const BLOB_FILENAME = 'data/leaderboard.json';
 
 // Cloud Vercel Blob State
@@ -25,11 +22,6 @@ let latestBlobUrl = null;
 let lastBlobSyncTime = null;
 let isBlobSyncing = false;
 let pendingBlobSync = false;
-
-// Ensure data folder exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 // Initial state template for a board
 function createDefaultBoard(id, name, subtitle) {
@@ -66,38 +58,8 @@ const DEFAULT_DATA = {
   }
 };
 
-// Helper to load data
-function loadData() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      return {
-        passphrase: (parsed && parsed.passphrase) ? parsed.passphrase : DEFAULT_PASSPHRASE,
-        settings: { ...DEFAULT_DATA.settings, ...(parsed.settings || {}) },
-        boards: {
-          "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(parsed.boards ? parsed.boards["1"] : {}) },
-          "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(parsed.boards ? parsed.boards["2"] : {}) }
-        }
-      };
-    }
-  } catch (err) {
-    console.error('Error reading data file, resetting to default:', err);
-  }
-  saveData(DEFAULT_DATA);
-  return DEFAULT_DATA;
-}
-
-// Helper to save data safely (local disk + Vercel Blob cloud storage)
+// Helper to save data exclusively to Vercel Blob Storage
 function saveData(data) {
-  try {
-    const tempFile = `${DATA_FILE}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempFile, DATA_FILE);
-  } catch (err) {
-    console.error('Error saving data to local disk:', err);
-  }
-  // Asynchronously trigger Vercel Blob storage upload
   triggerBlobSync(data);
 }
 
@@ -140,15 +102,15 @@ async function triggerBlobSync(data) {
   }
 }
 
-// Inisialisasi awal sinkronisasi data dari/ke Vercel Blob saat server mulai
+// Inisialisasi awal pemuatan data dari Vercel Blob Storage saat server mulai
 async function initCloudBlob() {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.log('ℹ️ Vercel Blob: BLOB_READ_WRITE_TOKEN tidak terkonfigurasi. Berjalan dalam mode penyimpanan file lokal.');
+    console.warn('⚠️ Vercel Blob: BLOB_READ_WRITE_TOKEN tidak terkonfigurasi di server!');
     return;
   }
 
   try {
-    console.log('☁️ Memeriksa data di Vercel Blob Storage...');
+    console.log('☁️ Memuat data dari Vercel Blob Storage...');
     const { blobs } = await list({ prefix: BLOB_FILENAME });
     const existingBlob = blobs.find(b => b.pathname === BLOB_FILENAME || b.pathname.endsWith('leaderboard.json'));
 
@@ -164,18 +126,14 @@ async function initCloudBlob() {
           const cloudData = await res.json();
           if (cloudData && cloudData.boards) {
             state = {
-              passphrase: cloudData.passphrase || state.passphrase || DEFAULT_PASSPHRASE,
+              passphrase: cloudData.passphrase || DEFAULT_PASSPHRASE,
               settings: { ...DEFAULT_DATA.settings, ...(cloudData.settings || {}) },
               boards: {
                 "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(cloudData.boards ? cloudData.boards["1"] : {}) },
                 "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
               }
             };
-            // Perbarui cache file lokal
-            const tempFile = `${DATA_FILE}.tmp`;
-            fs.writeFileSync(tempFile, JSON.stringify(state, null, 2), 'utf-8');
-            fs.renameSync(tempFile, DATA_FILE);
-            console.log('☁️ Data leaderboard berhasil dimuat dari Vercel Blob ke memori server.');
+            console.log('☁️ Seluruh data leaderboard berhasil dimuat dari Vercel Blob Storage ke server!');
             io.emit('leaderboard_updated', getFullDataResponse());
           }
         }
@@ -229,8 +187,15 @@ function getRankedTeams(teams) {
   });
 }
 
-// State in memory
-let state = loadData();
+// State in memory (dimuat dan disimpan eksklusif ke Vercel Blob Storage)
+let state = {
+  passphrase: DEFAULT_DATA.passphrase,
+  settings: { ...DEFAULT_DATA.settings },
+  boards: {
+    "1": { ...DEFAULT_DATA.boards["1"] },
+    "2": { ...DEFAULT_DATA.boards["2"] }
+  }
+};
 
 // Middleware
 app.use(cors());

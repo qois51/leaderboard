@@ -13,7 +13,7 @@ Dirancang khusus untuk pertandingan arena/lintasan dengan 2 leaderboard terpisah
 - **Halaman Ganti Password**: Tersedia halaman khusus di [`/change-password`](http://localhost:3000/change-password) untuk mengganti password admin kapan saja:
   - Alur aman: wajib mengetik password saat ini (tanpa auto-fill demi keamanan), password baru (min. 4 karakter), dan konfirmasi password.
   - Terdapat tombol mata (👁️) untuk toggle *show/hide* password pada masing-masing kolom maupun tombol master centang.
-  - Password baru tersimpan otomatis secara persisten di berkas [`data/leaderboard.json`](data/leaderboard.json).
+  - Password baru tersimpan otomatis secara persisten di Vercel Blob Storage.
 
 ---
 
@@ -100,11 +100,10 @@ Panel admin ([`admin.html`](public/admin.html)) dirancang dengan filosofi **Remo
 
 ## 📁 Fitur Data & Backup (CSV & Vercel Blob Cloud)
 
-- **☁️ Vercel Blob Storage**:
-  - Seluruh data pertandingan secara otomatis tersimpan dan tersinkronisasi ke **Vercel Blob Storage** di cloud (`data/leaderboard.json`).
+- **☁️ Vercel Blob Storage (Penyimpanan Cloud Eksklusif)**:
+  - Seluruh data pertandingan, timer, tim, dan passphrase tersimpan secara eksklusif ke **Vercel Blob Storage** di cloud (`data/leaderboard.json`).
+  - Tidak lagi menggunakan penyimpanan file lokal di server disk (server beroperasi secara *cloud-native* dengan in-memory state berkecepatan tinggi).
   - Menggunakan package `@vercel/blob` dengan konfigurasi environment variable `BLOB_READ_WRITE_TOKEN`.
-  - Sistem hybrid: menyimpan ke disk lokal secara instan + sinkronisasi otomatis ke cloud di latar belakang tanpa menghambat performa.
   - Dilengkapi indikator status sinkronisasi, tombol *Sync Cloud*, serta tautan langsung untuk melihat JSON publik dari panel admin.
 - **Export CSV**: Unduh rekap peringkat lengkap berformat `.csv` (cocok untuk dibuka di Microsoft Excel atau Google Sheets).
 - **Import / Load CSV**: Muat data peserta massal dari file CSV dengan mode *Replace* (ganti semua) atau *Append* (tambahkan).
-- **Penyimpanan Lokal Real-Time**: Data tersimpan di berkas [`data/leaderboard.json`](data/leaderboard.json).
