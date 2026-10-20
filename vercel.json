@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/change-password", "destination": "/change-password.html" },
+    { "source": "/display", "destination": "/index.html" },
+    { "source": "/api/(.*)", "destination": "/api/index.js" }
+  ]
+}

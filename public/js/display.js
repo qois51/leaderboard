@@ -1,6 +1,14 @@
 // display.js - Handles real-time display, dual boards, & countdown timer
 
-const socket = io();
+// Safe Socket.io initialization (works both with standalone server & serverless)
+let socket = null;
+if (typeof io !== 'undefined') {
+  try {
+    socket = io({ autoConnect: true, reconnectionAttempts: 3, timeout: 3000 });
+  } catch (e) {
+    console.warn('Socket.IO init notice:', e);
+  }
+}
 
 // State
 let globalData = null;
@@ -349,37 +357,84 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// Socket Events
-socket.on('connect', () => {
-  console.log('Connected to Leaderboard Server via Socket.IO');
-});
-
-socket.on('initial_data', (data) => {
-  globalData = data;
-  renderView();
-});
-
-socket.on('leaderboard_updated', (data) => {
-  globalData = data;
-  renderView();
-});
-
-socket.on('timer_tick', (payload) => {
-  if (!globalData || !globalData.boards[payload.boardId]) return;
-  globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
-  globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
-
-  if (activeBoardId === payload.boardId) {
-    updateTimerDisplay(globalData.boards[payload.boardId]);
-  } else if (activeBoardId === 'split') {
-    renderSplitView();
+// Initial API Fetch & Periodic Polling (Guarantees sync on Vercel Serverless)
+async function fetchDataFromApi() {
+  try {
+    const res = await fetch('/api/data', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      globalData = data;
+      renderView();
+    }
+  } catch (err) {
+    // Ignore transient network errors
   }
-});
+}
+fetchDataFromApi();
+setInterval(fetchDataFromApi, 2000);
 
-socket.on('timer_started', (payload) => {
-  sounds.playWhistle();
-});
+// Client-side smooth timer calculation (50ms loop)
+setInterval(() => {
+  if (!globalData || !globalData.boards) return;
+  let hasRunning = false;
+  ['1', '2'].forEach(bId => {
+    const b = globalData.boards[bId];
+    if (b && b.timer && b.timer.isRunning && b.timer.targetEndTime) {
+      const rem = Math.max(0, b.timer.targetEndTime - Date.now());
+      b.timer.remainingMs = rem;
+      if (rem <= 0) {
+        b.timer.isRunning = false;
+        b.timer.remainingMs = 0;
+        b.timer.startedAt = null;
+        b.timer.targetEndTime = null;
+        sounds.playBuzzer();
+      }
+      hasRunning = true;
+    }
+  });
 
-socket.on('timer_finished', (payload) => {
-  sounds.playBuzzer();
-});
+  if (hasRunning) {
+    if (activeBoardId === 'split') {
+      renderSplitView();
+    } else if (globalData.boards[activeBoardId]) {
+      updateTimerDisplay(globalData.boards[activeBoardId]);
+    }
+  }
+}, 50);
+
+// Socket Events (if Socket.io connection is active)
+if (socket) {
+  socket.on('connect', () => {
+    console.log('Connected to Leaderboard Server via Socket.IO');
+  });
+
+  socket.on('initial_data', (data) => {
+    globalData = data;
+    renderView();
+  });
+
+  socket.on('leaderboard_updated', (data) => {
+    globalData = data;
+    renderView();
+  });
+
+  socket.on('timer_tick', (payload) => {
+    if (!globalData || !globalData.boards[payload.boardId]) return;
+    globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
+    globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
+
+    if (activeBoardId === payload.boardId) {
+      updateTimerDisplay(globalData.boards[payload.boardId]);
+    } else if (activeBoardId === 'split') {
+      renderSplitView();
+    }
+  });
+
+  socket.on('timer_started', (payload) => {
+    sounds.playWhistle();
+  });
+
+  socket.on('timer_finished', (payload) => {
+    sounds.playBuzzer();
+  });
+}

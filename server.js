@@ -59,21 +59,13 @@ const DEFAULT_DATA = {
 };
 
 // Helper to save data exclusively to Vercel Blob Storage
-function saveData(data) {
-  triggerBlobSync(data);
+async function saveData(data) {
+  return await triggerBlobSync(data);
 }
 
 // Background sync to Vercel Blob Storage
 async function triggerBlobSync(data) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
-
-  if (isBlobSyncing) {
-    pendingBlobSync = true;
-    return;
-  }
-
-  isBlobSyncing = true;
-  pendingBlobSync = false;
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
 
   try {
     const jsonString = JSON.stringify(data, null, 2);
@@ -87,41 +79,37 @@ async function triggerBlobSync(data) {
     lastBlobSyncTime = new Date().toISOString();
     console.log(`☁️ Vercel Blob tersinkron: ${blob.url}`);
 
-    io.emit('blob_status_updated', {
-      enabled: true,
-      url: latestBlobUrl,
-      lastSync: lastBlobSyncTime
-    });
+    if (io) {
+      io.emit('blob_status_updated', {
+        enabled: true,
+        url: latestBlobUrl,
+        lastSync: lastBlobSyncTime
+      });
+    }
+    return blob;
   } catch (err) {
     console.error('☁️ Gagal sinkronisasi ke Vercel Blob:', err.message);
-  } finally {
-    isBlobSyncing = false;
-    if (pendingBlobSync) {
-      triggerBlobSync(state);
-    }
+    throw err;
   }
 }
 
-// Inisialisasi awal pemuatan data dari Vercel Blob Storage saat server mulai
-async function initCloudBlob() {
+// Inisialisasi pemuatan data dari Vercel Blob Storage
+let lastCloudFetchTime = 0;
+async function initCloudBlob(force = false) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.warn('⚠️ Vercel Blob: BLOB_READ_WRITE_TOKEN tidak terkonfigurasi di server!');
     return;
   }
 
+  const now = Date.now();
+  if (!force && now - lastCloudFetchTime < 1000) {
+    return;
+  }
+  lastCloudFetchTime = now;
+
   try {
-    console.log('☁️ Memuat data dari Vercel Blob Storage...');
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    const existingBlob = blobs.find(b => b.pathname === BLOB_FILENAME || b.pathname.endsWith('leaderboard.json'));
-
-    if (existingBlob) {
-      latestBlobUrl = existingBlob.url;
-      lastBlobSyncTime = existingBlob.uploadedAt ? new Date(existingBlob.uploadedAt).toISOString() : new Date().toISOString();
-      console.log(`☁️ Berkas Vercel Blob ditemukan: ${existingBlob.url}`);
-
-      // Unduh dan periksa data dari cloud
+    if (latestBlobUrl) {
       try {
-        const res = await fetch(existingBlob.url, { cache: 'no-store' });
+        const res = await fetch(`${latestBlobUrl}?t=${now}`, { cache: 'no-store' });
         if (res.ok) {
           const cloudData = await res.json();
           if (cloudData && cloudData.boards) {
@@ -133,19 +121,41 @@ async function initCloudBlob() {
                 "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
               }
             };
-            console.log('☁️ Seluruh data leaderboard berhasil dimuat dari Vercel Blob Storage ke server!');
-            io.emit('leaderboard_updated', getFullDataResponse());
+            return;
           }
         }
       } catch (e) {
-        console.warn('Gagal membaca data dari blob URL:', e.message);
+        // Fallback to list()
+      }
+    }
+
+    const { blobs } = await list({ prefix: BLOB_FILENAME });
+    const existingBlob = blobs.find(b => b.pathname === BLOB_FILENAME || b.pathname.endsWith('leaderboard.json'));
+
+    if (existingBlob) {
+      latestBlobUrl = existingBlob.url;
+      lastBlobSyncTime = existingBlob.uploadedAt ? new Date(existingBlob.uploadedAt).toISOString() : new Date().toISOString();
+
+      const res = await fetch(`${existingBlob.url}?t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        const cloudData = await res.json();
+        if (cloudData && cloudData.boards) {
+          state = {
+            passphrase: cloudData.passphrase || DEFAULT_PASSPHRASE,
+            settings: { ...DEFAULT_DATA.settings, ...(cloudData.settings || {}) },
+            boards: {
+              "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(cloudData.boards ? cloudData.boards["1"] : {}) },
+              "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
+            }
+          };
+          if (io) io.emit('leaderboard_updated', getFullDataResponse());
+        }
       }
     } else {
-      console.log('☁️ Belum ada berkas di Vercel Blob, mengunggah data saat ini ke cloud...');
       await triggerBlobSync(state);
     }
   } catch (err) {
-    console.error('☁️ Error inisialisasi Vercel Blob:', err.message);
+    console.error('☁️ Error sinkronisasi Vercel Blob:', err.message);
   }
 }
 
@@ -213,6 +223,18 @@ function requirePassphrase(req, res, next) {
   next();
 }
 
+// Cloud Blob Sync Middleware for API calls (Serverless compatibility)
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    try {
+      await initCloudBlob();
+    } catch (e) {
+      // Continue even if cloud sync is temporarily unavailable
+    }
+  }
+  next();
+});
+
 // Specific routes for views
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -252,38 +274,40 @@ function getFullDataResponse() {
   };
 }
 
-// Timer Loop: update running timers on server
-setInterval(() => {
-  let changed = false;
-  ['1', '2'].forEach(bId => {
-    const board = state.boards[bId];
-    if (board && board.timer && board.timer.isRunning) {
-      const now = Date.now();
-      const remaining = Math.max(0, board.timer.targetEndTime - now);
-      board.timer.remainingMs = remaining;
+// Timer Loop: update running timers on server (only for persistent instances)
+if (!process.env.VERCEL) {
+  setInterval(() => {
+    let changed = false;
+    ['1', '2'].forEach(bId => {
+      const board = state.boards[bId];
+      if (board && board.timer && board.timer.isRunning) {
+        const now = Date.now();
+        const remaining = Math.max(0, board.timer.targetEndTime - now);
+        board.timer.remainingMs = remaining;
 
-      if (remaining <= 0) {
-        board.timer.isRunning = false;
-        board.timer.remainingMs = 0;
-        board.timer.startedAt = null;
-        board.timer.targetEndTime = null;
-        changed = true;
-        io.emit('timer_finished', { boardId: bId });
+        if (remaining <= 0) {
+          board.timer.isRunning = false;
+          board.timer.remainingMs = 0;
+          board.timer.startedAt = null;
+          board.timer.targetEndTime = null;
+          changed = true;
+          io.emit('timer_finished', { boardId: bId });
+        }
+        
+        // Emit tick
+        io.emit('timer_tick', {
+          boardId: bId,
+          remainingMs: board.timer.remainingMs,
+          isRunning: board.timer.isRunning
+        });
       }
-      
-      // Emit tick
-      io.emit('timer_tick', {
-        boardId: bId,
-        remainingMs: board.timer.remainingMs,
-        isRunning: board.timer.isRunning
-      });
-    }
-  });
+    });
 
-  if (changed) {
-    saveData(state);
-  }
-}, 200);
+    if (changed) {
+      saveData(state);
+    }
+  }, 200);
+}
 
 // ========================
 // REST APIS
@@ -301,7 +325,7 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // 1b. Change Password Endpoint
-app.post('/api/auth/change-password', (req, res) => {
+app.post('/api/auth/change-password', async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const activePass = state.passphrase || DEFAULT_PASSPHRASE;
 
@@ -326,7 +350,7 @@ app.post('/api/auth/change-password', (req, res) => {
   }
 
   state.passphrase = newPassword.trim();
-  saveData(state);
+  await saveData(state);
 
   res.json({ success: true, message: 'Password admin berhasil diperbarui!' });
 });
@@ -337,7 +361,7 @@ app.get('/api/data', (req, res) => {
 });
 
 // 3. Add team (Protected)
-app.post('/api/teams', requirePassphrase, (req, res) => {
+app.post('/api/teams', requirePassphrase, async (req, res) => {
   const { boardId = '1', name, minutes, seconds, milliseconds } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) {
@@ -363,16 +387,16 @@ app.post('/api/teams', requirePassphrase, (req, res) => {
   };
 
   board.teams.push(newTeam);
-  saveData(state);
+  await saveData(state);
 
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.status(201).json({ success: true, team: newTeam, boardId, fullData });
 });
 
 // 4. Edit team (Protected)
-app.put('/api/teams/:id', requirePassphrase, (req, res) => {
+app.put('/api/teams/:id', requirePassphrase, async (req, res) => {
   const { id } = req.params;
   const { boardId = '1', name, minutes, seconds, milliseconds } = req.body;
   const board = state.boards[String(boardId)];
@@ -399,16 +423,16 @@ app.put('/api/teams/:id', requirePassphrase, (req, res) => {
   board.teams[teamIndex].totalMs = calculateTotalMs(m, s, ms);
   board.teams[teamIndex].updatedAt = new Date().toISOString();
 
-  saveData(state);
+  await saveData(state);
 
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, team: board.teams[teamIndex], fullData });
 });
 
 // 5. Delete team (Protected)
-app.delete('/api/teams/:id', requirePassphrase, (req, res) => {
+app.delete('/api/teams/:id', requirePassphrase, async (req, res) => {
   const { id } = req.params;
   const { boardId = '1' } = req.query;
   const board = state.boards[String(boardId)];
@@ -423,15 +447,15 @@ app.delete('/api/teams/:id', requirePassphrase, (req, res) => {
     return res.status(404).json({ error: 'Kelompok tidak ditemukan.' });
   }
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, fullData });
 });
 
 // 6. Reset all teams in a board (Protected)
-app.post('/api/teams/reset', requirePassphrase, (req, res) => {
+app.post('/api/teams/reset', requirePassphrase, async (req, res) => {
   const { boardId = '1' } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) {
@@ -439,16 +463,16 @@ app.post('/api/teams/reset', requirePassphrase, (req, res) => {
   }
 
   board.teams = [];
-  saveData(state);
+  await saveData(state);
 
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, message: `Data ${board.name} berhasil direset.` });
 });
 
 // 7. Timer Controls (Protected)
-app.post('/api/timer/control', requirePassphrase, (req, res) => {
+app.post('/api/timer/control', requirePassphrase, async (req, res) => {
   const { boardId = '1', action, durationSeconds, title, teamA, teamB } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
@@ -478,7 +502,7 @@ app.post('/api/timer/control', requirePassphrase, (req, res) => {
       timer.isRunning = true;
       timer.startedAt = Date.now();
       timer.targetEndTime = Date.now() + timer.remainingMs;
-      io.emit('timer_started', { boardId });
+      if (io) io.emit('timer_started', { boardId });
     }
   } else if (action === 'pause') {
     if (timer.isRunning) {
@@ -494,14 +518,14 @@ app.post('/api/timer/control', requirePassphrase, (req, res) => {
     timer.targetEndTime = null;
   }
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, timer, activeMatch: board.activeMatch });
 });
 
 // 8. Setup Active Battle Teams (Protected)
-app.post('/api/match/setup', requirePassphrase, (req, res) => {
+app.post('/api/match/setup', requirePassphrase, async (req, res) => {
   const { boardId = '1', teamA, teamB } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
@@ -511,14 +535,14 @@ app.post('/api/match/setup', requirePassphrase, (req, res) => {
     teamB: (teamB || '').trim()
   };
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, activeMatch: board.activeMatch });
 });
 
 // 9. Record Time directly from Timer for Active Team (Protected)
-app.post('/api/match/record-time', requirePassphrase, (req, res) => {
+app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
   const { boardId = '1', teamType, teamName, teamA, teamB } = req.body; // teamType: 'A' or 'B'
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
@@ -537,7 +561,6 @@ app.post('/api/match/record-time', requirePassphrase, (req, res) => {
   if (teamType === 'B') board.activeMatch.teamB = finalName;
 
   // Calculate elapsed time (waktu yang dihabiskan)
-  // Elapsed time = (durationSeconds * 1000) - remainingMs
   const totalDurationMs = board.timer.durationSeconds * 1000;
   let elapsedMs = totalDurationMs - board.timer.remainingMs;
   if (elapsedMs <= 0) elapsedMs = 500; // minimum fallback
@@ -570,9 +593,9 @@ app.post('/api/match/record-time', requirePassphrase, (req, res) => {
     board.teams.push(savedTeam);
   }
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({
     success: true,
@@ -584,7 +607,7 @@ app.post('/api/match/record-time', requirePassphrase, (req, res) => {
 });
 
 // 10. Update board settings / titles (Protected)
-app.post('/api/boards/settings', requirePassphrase, (req, res) => {
+app.post('/api/boards/settings', requirePassphrase, async (req, res) => {
   const { boardId = '1', name, subtitle, eventName, eventSubtitle } = req.body;
   if (eventName) state.settings.eventName = eventName.trim();
   if (eventSubtitle !== undefined) state.settings.subTitle = eventSubtitle.trim();
@@ -595,14 +618,14 @@ app.post('/api/boards/settings', requirePassphrase, (req, res) => {
     if (subtitle !== undefined) board.subtitle = subtitle.trim();
   }
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, fullData });
 });
 
 // 11. Demo data populate (Protected)
-app.post('/api/demo-data', requirePassphrase, (req, res) => {
+app.post('/api/demo-data', requirePassphrase, async (req, res) => {
   const { boardId = '1' } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
@@ -630,9 +653,9 @@ app.post('/api/demo-data', requirePassphrase, (req, res) => {
     createdAt: new Date(Date.now() + i * 1000).toISOString()
   }));
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, fullData });
 });
@@ -661,7 +684,7 @@ app.get('/api/export-csv', (req, res) => {
 });
 
 // 13. Import CSV (Protected)
-app.post('/api/import-csv', requirePassphrase, (req, res) => {
+app.post('/api/import-csv', requirePassphrase, async (req, res) => {
   const { boardId = '1', teams, mode } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
@@ -691,9 +714,9 @@ app.post('/api/import-csv', requirePassphrase, (req, res) => {
     board.teams = [...board.teams, ...validTeams];
   }
 
-  saveData(state);
+  await saveData(state);
   const fullData = getFullDataResponse();
-  io.emit('leaderboard_updated', fullData);
+  if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, count: validTeams.length, fullData });
 });
@@ -731,19 +754,24 @@ io.on('connection', (socket) => {
   socket.emit('initial_data', getFullDataResponse());
 });
 
-// Start server
-server.listen(PORT, () => {
-  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
-  console.log(`====================================================`);
-  console.log(`🏆 LEADERBOARD APP (MULTI-BOARD & TIMER RUNNING)`);
-  console.log(`🔒 Passphrase Panitia        : ${activePass}`);
-  console.log(`📺 Layar Display Proyektor   : http://localhost:${PORT}/display`);
-  console.log(`⚙️  Panel Panitia 1           : http://localhost:${PORT}/admin?board=1`);
-  console.log(`⚙️  Panel Panitia 2           : http://localhost:${PORT}/admin?board=2`);
-  console.log(`🔑 Ganti Password            : http://localhost:${PORT}/change-password`);
-  console.log(`☁️ Vercel Blob Storage       : ${process.env.BLOB_READ_WRITE_TOKEN ? 'Aktif' : 'Tidak aktif (Lokal)'}`);
-  console.log(`====================================================`);
+// Start server (only if run directly, not when imported as a serverless module or on Vercel)
+if (require.main === module && !process.env.VERCEL) {
+  server.listen(PORT, () => {
+    const activePass = state.passphrase || DEFAULT_PASSPHRASE;
+    console.log(`====================================================`);
+    console.log(`🏆 LEADERBOARD APP (MULTI-BOARD & TIMER RUNNING)`);
+    console.log(`🔒 Passphrase Panitia        : ${activePass}`);
+    console.log(`📺 Layar Display Proyektor   : http://localhost:${PORT}/display`);
+    console.log(`⚙️  Panel Panitia 1           : http://localhost:${PORT}/admin?board=1`);
+    console.log(`⚙️  Panel Panitia 2           : http://localhost:${PORT}/admin?board=2`);
+    console.log(`🔑 Ganti Password            : http://localhost:${PORT}/change-password`);
+    console.log(`☁️ Vercel Blob Storage       : ${process.env.BLOB_READ_WRITE_TOKEN ? 'Aktif' : 'Tidak aktif (Lokal)'}`);
+    console.log(`====================================================`);
 
-  // Inisialisasi sinkronisasi cloud
-  initCloudBlob();
-});
+    // Inisialisasi sinkronisasi cloud
+    initCloudBlob();
+  });
+}
+
+module.exports = app;
+module.exports.server = server;

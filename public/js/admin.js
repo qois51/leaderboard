@@ -1,6 +1,14 @@
 // admin.js - Panitia Control Panel with Passphrase Auth, Dual Boards, Timer & Quick Finish
 
-const socket = io();
+// Safe Socket.io initialization (works both with standalone server & serverless)
+let socket = null;
+if (typeof io !== 'undefined') {
+  try {
+    socket = io({ autoConnect: true, reconnectionAttempts: 3, timeout: 3000 });
+  } catch (e) {
+    console.warn('Socket.IO init notice:', e);
+  }
+}
 
 // State
 let globalData = null;
@@ -922,55 +930,100 @@ async function handleManualBlobSync() {
   }
 }
 
-// Socket Events
-socket.on('initial_data', (data) => {
-  globalData = data;
-  renderAdminView();
-  if (data && data.blob) {
-    updateBlobUI(data.blob);
+// Initial API Fetch & Periodic Polling (Guarantees sync on Vercel Serverless)
+async function fetchAdminData() {
+  try {
+    const res = await fetch('/api/data', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      globalData = data;
+      renderAdminView();
+      if (data && data.blob) {
+        updateBlobUI(data.blob);
+      }
+    }
+  } catch (e) {
+    // Ignore transient network errors
   }
-});
+}
+fetchAdminData();
+setInterval(fetchAdminData, 2000);
 
-socket.on('leaderboard_updated', (data) => {
-  globalData = data;
-  renderAdminView();
-  if (data && data.blob) {
-    updateBlobUI(data.blob);
-  }
-});
-
-socket.on('blob_status_updated', (payload) => {
-  updateBlobUI(payload);
-});
-
-socket.on('timer_tick', (payload) => {
-  if (!globalData || !globalData.boards[payload.boardId]) return;
-  globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
-  globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
-
-  if (activeBoardId === payload.boardId) {
-    adminTimerDigits.textContent = formatMs(payload.remainingMs);
-    if (payload.remainingMs <= 0) {
+// Client-side smooth timer calculation (50ms loop)
+setInterval(() => {
+  if (!globalData || !globalData.boards) return;
+  const board = globalData.boards[activeBoardId];
+  if (board && board.timer && board.timer.isRunning && board.timer.targetEndTime) {
+    const rem = Math.max(0, board.timer.targetEndTime - Date.now());
+    board.timer.remainingMs = rem;
+    adminTimerDigits.textContent = formatMs(rem);
+    if (rem <= 0) {
+      board.timer.isRunning = false;
+      board.timer.remainingMs = 0;
+      board.timer.startedAt = null;
+      board.timer.targetEndTime = null;
       adminTimerStatus.textContent = 'HABIS';
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
-    } else if (payload.isRunning) {
+      if (typeof sounds !== 'undefined') sounds.playBuzzer();
+      showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
+    } else {
       adminTimerStatus.textContent = 'BERJALAN';
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
     }
   }
-});
+}, 50);
 
-// Suara timer ketika pertandingan dimulai
-socket.on('timer_started', (payload) => {
-  if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
-    sounds.playWhistle();
-  }
-});
+// Socket Events (if Socket.io connection is active)
+if (socket) {
+  socket.on('initial_data', (data) => {
+    globalData = data;
+    renderAdminView();
+    if (data && data.blob) {
+      updateBlobUI(data.blob);
+    }
+  });
 
-// Suara buzzer waktu habis (00:00)
-socket.on('timer_finished', (payload) => {
-  if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
-    sounds.playBuzzer();
-    showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
-  }
-});
+  socket.on('leaderboard_updated', (data) => {
+    globalData = data;
+    renderAdminView();
+    if (data && data.blob) {
+      updateBlobUI(data.blob);
+    }
+  });
+
+  socket.on('blob_status_updated', (payload) => {
+    updateBlobUI(payload);
+  });
+
+  socket.on('timer_tick', (payload) => {
+    if (!globalData || !globalData.boards[payload.boardId]) return;
+    globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
+    globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
+
+    if (activeBoardId === payload.boardId) {
+      adminTimerDigits.textContent = formatMs(payload.remainingMs);
+      if (payload.remainingMs <= 0) {
+        adminTimerStatus.textContent = 'HABIS';
+        adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
+      } else if (payload.isRunning) {
+        adminTimerStatus.textContent = 'BERJALAN';
+        adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
+      }
+    }
+  });
+
+  // Suara timer ketika pertandingan dimulai
+  socket.on('timer_started', (payload) => {
+    if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
+      sounds.playWhistle();
+    }
+  });
+
+  // Suara buzzer waktu habis (00:00)
+  socket.on('timer_finished', (payload) => {
+    if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
+      sounds.playBuzzer();
+      showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
+    }
+  });
+}

@@ -107,3 +107,38 @@ Panel admin ([`admin.html`](public/admin.html)) dirancang dengan filosofi **Remo
   - Dilengkapi indikator status sinkronisasi, tombol *Sync Cloud*, serta tautan langsung untuk melihat JSON publik dari panel admin.
 - **Export CSV**: Unduh rekap peringkat lengkap berformat `.csv` (cocok untuk dibuka di Microsoft Excel atau Google Sheets).
 - **Import / Load CSV**: Muat data peserta massal dari file CSV dengan mode *Replace* (ganti semua) atau *Append* (tambahkan).
+
+---
+
+## ☁️ Panduan Deployment ke Vercel
+
+Aplikasi ini sudah dipersiapkan sepenuhnya untuk langsung di-hosting di **Vercel** menggunakan arsitektur Vercel Serverless Function dan Vercel Blob Storage:
+
+### 1. Struktur File Siap Vercel
+- [`vercel.json`](vercel.json): Mengatur routing URL bersih (`/display`, `/admin`, `/change-password`), file statis via Edge CDN, dan rewrites API ke [`api/index.js`](api/index.js).
+- [`api/index.js`](api/index.js): Entry point serverless function untuk Express API.
+- [`public/socket.io/socket.io.js`](public/socket.io/socket.io.js): File client Socket.IO mandiri sehingga tidak membutuhkan file dinamis dari server Node.
+- **Dual Sync (Socket.io + HTTP Polling + Client Timer Tick)**: Mendukung serverless Vercel secara native tanpa dependensi koneksi TCP WebSocket persisten.
+
+### 2. Langkah Deploy ke Vercel via Dashboard / GitHub
+1. Push project ini ke repository GitHub Anda (`git push origin main`).
+2. Buka [Vercel Dashboard](https://vercel.com/dashboard) dan klik **"Add New"** > **"Project"**.
+3. Pilih repository GitHub ini.
+4. Pada bagian **Environment Variables**, tambahkan:
+   - **Key**: `BLOB_READ_WRITE_TOKEN`
+   - **Value**: Masukkan token Vercel Blob Storage Anda.
+5. Klik **Deploy**.
+6. Aplikasi langsung aktif dan dapat diakses publik melalui URL `https://your-project.vercel.app`!
+
+### 3. Deploy via Vercel CLI
+```bash
+# Instal vercel cli jika belum ada
+npm i -g vercel
+
+# Login dan deploy
+vercel
+
+# Untuk deploy ke production
+vercel --prod
+```
+*(Pastikan environment variable `BLOB_READ_WRITE_TOKEN` telah diatur di dashboard project Vercel).*
