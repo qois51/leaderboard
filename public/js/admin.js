@@ -859,15 +859,88 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
+// ========================
+// VERCEL BLOB STORAGE UI & SYNC
+// ========================
+function updateBlobUI(blobInfo) {
+  if (!blobInfo) return;
+  const badge = document.getElementById('blobStatusBadge');
+  const syncTime = document.getElementById('blobSyncTime');
+  const urlLink = document.getElementById('blobPublicUrlLink');
+
+  if (badge) {
+    if (blobInfo.enabled) {
+      badge.textContent = 'TERHUBUNG';
+      badge.className = 'px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold';
+    } else {
+      badge.textContent = 'LOKAL';
+      badge.className = 'px-1.5 py-0.5 rounded text-[9px] bg-gray-800 text-gray-400 border border-gray-700 font-bold';
+    }
+  }
+
+  if (syncTime && blobInfo.lastSync) {
+    const d = new Date(blobInfo.lastSync);
+    syncTime.textContent = 'Sync: ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  if (urlLink) {
+    if (blobInfo.url) {
+      urlLink.href = blobInfo.url;
+      urlLink.classList.remove('pointer-events-none', 'opacity-50');
+    } else {
+      urlLink.classList.add('pointer-events-none', 'opacity-50');
+    }
+  }
+}
+
+async function handleManualBlobSync() {
+  const btn = document.getElementById('btnSyncBlob');
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('opacity-50');
+  }
+
+  try {
+    const res = await fetch('/api/blob/sync', {
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
+    const result = await res.json();
+    if (res.ok) {
+      showToast('☁️ Data tersinkron ke Vercel Blob Storage!');
+      updateBlobUI({ enabled: true, url: result.url, lastSync: result.lastSync });
+    } else {
+      showToast(result.error || 'Gagal sinkronisasi cloud', 'error');
+    }
+  } catch (err) {
+    showToast('Terjadi kesalahan koneksi sinkronisasi cloud', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('opacity-50');
+    }
+  }
+}
+
 // Socket Events
 socket.on('initial_data', (data) => {
   globalData = data;
   renderAdminView();
+  if (data && data.blob) {
+    updateBlobUI(data.blob);
+  }
 });
 
 socket.on('leaderboard_updated', (data) => {
   globalData = data;
   renderAdminView();
+  if (data && data.blob) {
+    updateBlobUI(data.blob);
+  }
+});
+
+socket.on('blob_status_updated', (payload) => {
+  updateBlobUI(payload);
 });
 
 socket.on('timer_tick', (payload) => {

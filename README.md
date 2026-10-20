@@ -98,8 +98,13 @@ Panel admin ([`admin.html`](public/admin.html)) dirancang dengan filosofi **Remo
 
 ---
 
-## 📁 Fitur Data & Backup (CSV)
+## 📁 Fitur Data & Backup (CSV & Vercel Blob Cloud)
 
+- **☁️ Vercel Blob Storage**:
+  - Seluruh data pertandingan secara otomatis tersimpan dan tersinkronisasi ke **Vercel Blob Storage** di cloud (`data/leaderboard.json`).
+  - Menggunakan package `@vercel/blob` dengan konfigurasi environment variable `BLOB_READ_WRITE_TOKEN`.
+  - Sistem hybrid: menyimpan ke disk lokal secara instan + sinkronisasi otomatis ke cloud di latar belakang tanpa menghambat performa.
+  - Dilengkapi indikator status sinkronisasi, tombol *Sync Cloud*, serta tautan langsung untuk melihat JSON publik dari panel admin.
 - **Export CSV**: Unduh rekap peringkat lengkap berformat `.csv` (cocok untuk dibuka di Microsoft Excel atau Google Sheets).
 - **Import / Load CSV**: Muat data peserta massal dari file CSV dengan mode *Replace* (ganti semua) atau *Append* (tambahkan).
-- **Penyimpanan Lokal Real-Time**: Semua data leaderboard dan konfigurasi tersimpan aman di berkas [`data/leaderboard.json`](data/leaderboard.json).
+- **Penyimpanan Lokal Real-Time**: Data tersimpan di berkas [`data/leaderboard.json`](data/leaderboard.json).

@@ -1,3 +1,6 @@
+require('dotenv').config({ path: '.env.local' });
+require('dotenv').config();
+const { put, list } = require('@vercel/blob');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -15,6 +18,13 @@ const PORT = process.env.PORT || 3000;
 const DEFAULT_PASSPHRASE = 'qoisganteng123';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'leaderboard.json');
+const BLOB_FILENAME = 'data/leaderboard.json';
+
+// Cloud Vercel Blob State
+let latestBlobUrl = null;
+let lastBlobSyncTime = null;
+let isBlobSyncing = false;
+let pendingBlobSync = false;
 
 // Ensure data folder exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -78,14 +88,106 @@ function loadData() {
   return DEFAULT_DATA;
 }
 
-// Helper to save data safely
+// Helper to save data safely (local disk + Vercel Blob cloud storage)
 function saveData(data) {
   try {
     const tempFile = `${DATA_FILE}.tmp`;
     fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempFile, DATA_FILE);
   } catch (err) {
-    console.error('Error saving data:', err);
+    console.error('Error saving data to local disk:', err);
+  }
+  // Asynchronously trigger Vercel Blob storage upload
+  triggerBlobSync(data);
+}
+
+// Background sync to Vercel Blob Storage
+async function triggerBlobSync(data) {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
+
+  if (isBlobSyncing) {
+    pendingBlobSync = true;
+    return;
+  }
+
+  isBlobSyncing = true;
+  pendingBlobSync = false;
+
+  try {
+    const jsonString = JSON.stringify(data, null, 2);
+    const blob = await put(BLOB_FILENAME, jsonString, {
+      access: 'public',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: 'application/json'
+    });
+    latestBlobUrl = blob.url;
+    lastBlobSyncTime = new Date().toISOString();
+    console.log(`☁️ Vercel Blob tersinkron: ${blob.url}`);
+
+    io.emit('blob_status_updated', {
+      enabled: true,
+      url: latestBlobUrl,
+      lastSync: lastBlobSyncTime
+    });
+  } catch (err) {
+    console.error('☁️ Gagal sinkronisasi ke Vercel Blob:', err.message);
+  } finally {
+    isBlobSyncing = false;
+    if (pendingBlobSync) {
+      triggerBlobSync(state);
+    }
+  }
+}
+
+// Inisialisasi awal sinkronisasi data dari/ke Vercel Blob saat server mulai
+async function initCloudBlob() {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.log('ℹ️ Vercel Blob: BLOB_READ_WRITE_TOKEN tidak terkonfigurasi. Berjalan dalam mode penyimpanan file lokal.');
+    return;
+  }
+
+  try {
+    console.log('☁️ Memeriksa data di Vercel Blob Storage...');
+    const { blobs } = await list({ prefix: BLOB_FILENAME });
+    const existingBlob = blobs.find(b => b.pathname === BLOB_FILENAME || b.pathname.endsWith('leaderboard.json'));
+
+    if (existingBlob) {
+      latestBlobUrl = existingBlob.url;
+      lastBlobSyncTime = existingBlob.uploadedAt ? new Date(existingBlob.uploadedAt).toISOString() : new Date().toISOString();
+      console.log(`☁️ Berkas Vercel Blob ditemukan: ${existingBlob.url}`);
+
+      // Unduh dan periksa data dari cloud
+      try {
+        const res = await fetch(existingBlob.url, { cache: 'no-store' });
+        if (res.ok) {
+          const cloudData = await res.json();
+          if (cloudData && cloudData.boards) {
+            state = {
+              passphrase: cloudData.passphrase || state.passphrase || DEFAULT_PASSPHRASE,
+              settings: { ...DEFAULT_DATA.settings, ...(cloudData.settings || {}) },
+              boards: {
+                "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(cloudData.boards ? cloudData.boards["1"] : {}) },
+                "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
+              }
+            };
+            // Perbarui cache file lokal
+            const tempFile = `${DATA_FILE}.tmp`;
+            fs.writeFileSync(tempFile, JSON.stringify(state, null, 2), 'utf-8');
+            fs.renameSync(tempFile, DATA_FILE);
+            console.log('☁️ Data leaderboard berhasil dimuat dari Vercel Blob ke memori server.');
+            io.emit('leaderboard_updated', getFullDataResponse());
+          }
+        }
+      } catch (e) {
+        console.warn('Gagal membaca data dari blob URL:', e.message);
+      }
+    } else {
+      console.log('☁️ Belum ada berkas di Vercel Blob, mengunggah data saat ini ke cloud...');
+      await triggerBlobSync(state);
+    }
+  } catch (err) {
+    console.error('☁️ Error inisialisasi Vercel Blob:', err.message);
   }
 }
 
@@ -176,6 +278,11 @@ function getFullDataResponse() {
         ...state.boards["2"],
         teams: getRankedTeams(state.boards["2"].teams)
       }
+    },
+    blob: {
+      enabled: !!process.env.BLOB_READ_WRITE_TOKEN,
+      url: latestBlobUrl,
+      lastSync: lastBlobSyncTime
     }
   };
 }
@@ -626,6 +733,34 @@ app.post('/api/import-csv', requirePassphrase, (req, res) => {
   res.json({ success: true, count: validTeams.length, fullData });
 });
 
+// 12. Vercel Blob Storage Status
+app.get('/api/blob/status', (req, res) => {
+  res.json({
+    enabled: !!process.env.BLOB_READ_WRITE_TOKEN,
+    url: latestBlobUrl,
+    lastSync: lastBlobSyncTime,
+    pathname: BLOB_FILENAME
+  });
+});
+
+// 13. Manual Sync to Vercel Blob Storage (Protected)
+app.post('/api/blob/sync', requirePassphrase, async (req, res) => {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return res.status(400).json({ error: 'BLOB_READ_WRITE_TOKEN tidak terkonfigurasi di server.' });
+  }
+  try {
+    await triggerBlobSync(state);
+    res.json({
+      success: true,
+      message: 'Data berhasil disinkronkan ke Vercel Blob Storage!',
+      url: latestBlobUrl,
+      lastSync: lastBlobSyncTime
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Gagal sinkronisasi: ${err.message}` });
+  }
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   socket.emit('initial_data', getFullDataResponse());
@@ -641,5 +776,9 @@ server.listen(PORT, () => {
   console.log(`⚙️  Panel Panitia 1           : http://localhost:${PORT}/admin?board=1`);
   console.log(`⚙️  Panel Panitia 2           : http://localhost:${PORT}/admin?board=2`);
   console.log(`🔑 Ganti Password            : http://localhost:${PORT}/change-password`);
+  console.log(`☁️ Vercel Blob Storage       : ${process.env.BLOB_READ_WRITE_TOKEN ? 'Aktif' : 'Tidak aktif (Lokal)'}`);
   console.log(`====================================================`);
+
+  // Inisialisasi sinkronisasi cloud
+  initCloudBlob();
 });
