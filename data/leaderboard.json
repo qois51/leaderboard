@@ -1,0 +1,198 @@
+{
+  "passphrase": "qoisganteng123",
+  "settings": {
+    "eventName": "LEADERBOARD PERLOMBAAN",
+    "subTitle": "Waktu Tercepat Menempati Juara 1 (Menit : Detik . Milidetik)",
+    "soundEnabled": true
+  },
+  "boards": {
+    "1": {
+      "id": "1",
+      "name": "Leaderboard 1",
+      "subtitle": "Kategori / Lintasan 1",
+      "activeMatch": {
+        "teamA": "Kelompok  14",
+        "teamB": "Kelompok 20"
+      },
+      "timer": {
+        "title": "Misi",
+        "durationSeconds": 900,
+        "remainingMs": 731960,
+        "isRunning": false,
+        "startedAt": null,
+        "targetEndTime": null
+      },
+      "teams": [
+        {
+          "id": "demo_1792088039208_0",
+          "name": "Tim Harimau (Jalur A)",
+          "minutes": 1,
+          "seconds": 12,
+          "milliseconds": 450,
+          "totalMs": 72450,
+          "createdAt": "2026-10-15T18:13:59.209Z",
+          "updatedAt": "2026-10-15T18:15:10.918Z"
+        },
+        {
+          "id": "demo_1792088039209_1",
+          "name": "Tim Rajawali (Jalur B)",
+          "minutes": 1,
+          "seconds": 18,
+          "milliseconds": 920,
+          "totalMs": 78920,
+          "createdAt": "2026-10-15T18:14:00.209Z"
+        },
+        {
+          "id": "demo_1792088039209_2",
+          "name": "Tim Komodo (Jalur A)",
+          "minutes": 1,
+          "seconds": 25,
+          "milliseconds": 100,
+          "totalMs": 85100,
+          "createdAt": "2026-10-15T18:14:01.209Z"
+        },
+        {
+          "id": "demo_1792088039209_3",
+          "name": "Tim Badak Perkasa",
+          "minutes": 1,
+          "seconds": 34,
+          "milliseconds": 80,
+          "totalMs": 94080,
+          "createdAt": "2026-10-15T18:14:02.209Z"
+        },
+        {
+          "id": "demo_1792088039209_4",
+          "name": "Tim Kancil Cepat",
+          "minutes": 1,
+          "seconds": 42,
+          "milliseconds": 650,
+          "totalMs": 102650,
+          "createdAt": "2026-10-15T18:14:03.209Z"
+        },
+        {
+          "id": "team_1792088047869_wf1sdm",
+          "name": "Tim Rajawali Super",
+          "minutes": 0,
+          "seconds": 55,
+          "milliseconds": 490,
+          "totalMs": 55490,
+          "createdAt": "2026-10-15T18:14:07.869Z",
+          "updatedAt": "2026-10-15T18:16:40.065Z"
+        },
+        {
+          "id": "team_1792088179302_32yom6",
+          "name": "Kelompok A",
+          "minutes": 0,
+          "seconds": 34,
+          "milliseconds": 564,
+          "totalMs": 34564,
+          "createdAt": "2026-10-15T18:16:19.302Z"
+        },
+        {
+          "id": "team_1792088187540_rrrb0m",
+          "name": "Tim Garuda Petir",
+          "minutes": 1,
+          "seconds": 22,
+          "milliseconds": 865,
+          "totalMs": 82865,
+          "createdAt": "2026-10-15T18:16:27.540Z",
+          "updatedAt": "2026-10-15T18:17:07.602Z"
+        },
+        {
+          "id": "team_1792088653994_nksgsx",
+          "name": "Tim Jaguar",
+          "minutes": 8,
+          "seconds": 29,
+          "milliseconds": 323,
+          "totalMs": 509323,
+          "createdAt": "2026-10-15T18:24:13.994Z"
+        },
+        {
+          "id": "team_1792088837192_lp7d1l",
+          "name": "Kelompok 21",
+          "minutes": 0,
+          "seconds": 42,
+          "milliseconds": 669,
+          "totalMs": 42669,
+          "createdAt": "2026-10-15T18:27:17.192Z",
+          "updatedAt": "2026-10-15T18:27:49.775Z"
+        },
+        {
+          "id": "team_1792088846416_h0r9xt",
+          "name": "Kelompok 20",
+          "minutes": 0,
+          "seconds": 56,
+          "milliseconds": 341,
+          "totalMs": 56341,
+          "createdAt": "2026-10-15T18:27:26.416Z",
+          "updatedAt": "2026-10-16T06:54:58.472Z"
+        },
+        {
+          "id": "team_1792133645849_ui54pf",
+          "name": "Kelompok  14",
+          "minutes": 0,
+          "seconds": 43,
+          "milliseconds": 131,
+          "totalMs": 43131,
+          "createdAt": "2026-10-16T06:54:05.849Z",
+          "updatedAt": "2026-10-16T06:54:45.392Z"
+        }
+      ]
+    },
+    "2": {
+      "id": "2",
+      "name": "Leaderboard 2",
+      "subtitle": "Kategori / Lintasan 2",
+      "activeMatch": {
+        "teamA": "",
+        "teamB": ""
+      },
+      "timer": {
+        "title": "WAKTU PERTANDINGAN",
+        "durationSeconds": 180,
+        "remainingMs": 180000,
+        "isRunning": false,
+        "startedAt": null,
+        "targetEndTime": null
+      },
+      "teams": [
+        {
+          "id": "demo_1792088039238_0",
+          "name": "Tim Singa Perkasa",
+          "minutes": 0,
+          "seconds": 58,
+          "milliseconds": 200,
+          "totalMs": 58200,
+          "createdAt": "2026-10-15T18:13:59.238Z"
+        },
+        {
+          "id": "demo_1792088039238_1",
+          "name": "Tim Macan Tutul",
+          "minutes": 1,
+          "seconds": 5,
+          "milliseconds": 750,
+          "totalMs": 65750,
+          "createdAt": "2026-10-15T18:14:00.238Z"
+        },
+        {
+          "id": "demo_1792088039238_2",
+          "name": "Tim Garuda Emas",
+          "minutes": 1,
+          "seconds": 15,
+          "milliseconds": 300,
+          "totalMs": 75300,
+          "createdAt": "2026-10-15T18:14:01.238Z"
+        },
+        {
+          "id": "demo_1792088039238_3",
+          "name": "Tim Banteng Merah",
+          "minutes": 1,
+          "seconds": 22,
+          "milliseconds": 110,
+          "totalMs": 82110,
+          "createdAt": "2026-10-15T18:14:02.238Z"
+        }
+      ]
+    }
+  }
+}
