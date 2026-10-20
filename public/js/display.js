@@ -41,7 +41,7 @@ const matchupBanner = document.getElementById('matchupBanner');
 
 // Leaderboard Elements
 const emptyState = document.getElementById('emptyState');
-const podiumSection = document.getElementById('podiumSection');
+const currentBoardDisplayName = document.getElementById('currentBoardDisplayName');
 const restRankSection = document.getElementById('restRankSection');
 const rankListBody = document.getElementById('rankListBody');
 const totalParticipantsBadge = document.getElementById('totalParticipantsBadge');
@@ -138,28 +138,6 @@ function switchDisplayBoard(boardId) {
   }
 }
 
-// Update Podium Card
-function updatePodiumCard(elementId, team, rankNumber) {
-  const card = document.getElementById(elementId);
-  if (!card) return;
-
-  const nameEl = card.querySelector('.team-name');
-  const timeEl = card.querySelector('.team-time');
-  const gapEl = card.querySelector('.team-gap');
-
-  if (team) {
-    nameEl.textContent = team.name;
-    timeEl.textContent = team.formattedTime;
-    gapEl.textContent = team.gap || '';
-    card.classList.remove('opacity-30');
-  } else {
-    nameEl.textContent = `Menunggu Peserta...`;
-    timeEl.textContent = '--:--.---';
-    gapEl.textContent = `Posisi Juara ${rankNumber}`;
-    card.classList.add('opacity-30');
-  }
-}
-
 // Render Timer for Board
 function updateTimerDisplay(board) {
   if (!board || !board.timer) return;
@@ -211,11 +189,16 @@ function updateTimerDisplay(board) {
   matchTeamB.textContent = teamB;
 }
 
-// Render Single Board View
+// Render Single Board View (Unified Table for ALL Ranks, 80% Left Grid)
 function renderSingleBoard(board) {
   if (!board) return;
 
   updateTimerDisplay(board);
+
+  // Update board title and badge
+  if (currentBoardDisplayName) {
+    currentBoardDisplayName.innerHTML = `<span>🏆 Peringkat ${escapeHtml(board.name || 'Leaderboard')}</span>`;
+  }
 
   const teams = board.teams || [];
 
@@ -234,48 +217,64 @@ function renderSingleBoard(board) {
 
   // Handle empty state
   if (teams.length === 0) {
-    emptyState.classList.remove('hidden');
-    podiumSection.classList.add('hidden');
-    restRankSection.classList.add('hidden');
+    if (emptyState) emptyState.classList.remove('hidden');
+    if (restRankSection) restRankSection.classList.add('hidden');
+    if (totalParticipantsBadge) totalParticipantsBadge.textContent = '0 Tim Terdaftar';
     return;
   }
 
-  emptyState.classList.add('hidden');
-  podiumSection.classList.remove('hidden');
+  if (emptyState) emptyState.classList.add('hidden');
+  if (restRankSection) restRankSection.classList.remove('hidden');
+  if (totalParticipantsBadge) totalParticipantsBadge.textContent = `${teams.length} Tim Terdaftar`;
 
-  // Podium
-  updatePodiumCard('podiumRank1', teams[0], 1);
-  updatePodiumCard('podiumRank2', teams[1], 2);
-  updatePodiumCard('podiumRank3', teams[2], 3);
+  // Render unified table for all ranks (1 to N)
+  rankListBody.innerHTML = teams.map((team) => {
+    let rowBg = 'border-l-4 border-l-transparent hover:bg-gray-800/40';
+    let rankBadge = `<span class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-gray-800/90 font-bold text-gray-300 text-sm">${team.rank}</span>`;
+    let nameClass = 'font-semibold text-gray-200 text-sm sm:text-base';
+    let timeClass = 'mono font-bold text-blue-400 text-sm sm:text-base';
+    let gapClass = 'mono text-xs text-gray-400';
+    let leaderTag = '';
 
-  // Ranks 4+
-  const restTeams = teams.slice(3);
-  totalParticipantsBadge.textContent = `${teams.length} Tim`;
+    if (team.rank === 1) {
+      rowBg = 'bg-gradient-to-r from-amber-500/20 via-amber-500/5 to-transparent border-l-4 border-l-amber-400 hover:bg-amber-500/25';
+      rankBadge = `<span class="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-amber-400 text-gray-950 font-black text-xs sm:text-sm shadow-md shadow-amber-500/20">🥇 1</span>`;
+      nameClass = 'font-black text-amber-200 text-base sm:text-lg';
+      timeClass = 'mono font-black text-amber-300 text-base sm:text-lg';
+      gapClass = 'mono text-xs font-bold text-amber-400';
+      leaderTag = `<span class="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-black bg-amber-400/20 text-amber-300 border border-amber-400/40 uppercase tracking-wider">Juara 1</span>`;
+    } else if (team.rank === 2) {
+      rowBg = 'bg-gradient-to-r from-slate-300/15 via-slate-300/5 to-transparent border-l-4 border-l-slate-300 hover:bg-slate-300/20';
+      rankBadge = `<span class="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-slate-200 text-gray-950 font-black text-xs sm:text-sm shadow-md">🥈 2</span>`;
+      nameClass = 'font-bold text-slate-100 text-sm sm:text-base';
+      timeClass = 'mono font-bold text-slate-200 text-sm sm:text-base';
+      gapClass = 'mono text-xs font-semibold text-slate-300';
+    } else if (team.rank === 3) {
+      rowBg = 'bg-gradient-to-r from-amber-700/20 via-amber-700/5 to-transparent border-l-4 border-l-amber-600 hover:bg-amber-700/25';
+      rankBadge = `<span class="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg bg-amber-700 text-amber-100 font-black text-xs sm:text-sm shadow-md">🥉 3</span>`;
+      nameClass = 'font-bold text-amber-100 text-sm sm:text-base';
+      timeClass = 'mono font-bold text-amber-200 text-sm sm:text-base';
+      gapClass = 'mono text-xs font-semibold text-amber-300/80';
+    }
 
-  if (restTeams.length > 0) {
-    restRankSection.classList.remove('hidden');
-    rankListBody.innerHTML = restTeams.map((team) => `
-      <div class="grid grid-cols-12 px-5 py-3.5 items-center leaderboard-row text-sm border-b border-gray-800/40">
-        <div class="col-span-2 md:col-span-1 text-center">
-          <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-gray-800 font-bold text-gray-300">
-            ${team.rank}
-          </span>
+    return `
+      <div class="grid grid-cols-12 px-6 py-3.5 items-center leaderboard-row border-b border-gray-800/40 transition-colors ${rowBg}">
+        <div class="col-span-2 sm:col-span-1 text-center">
+          ${rankBadge}
         </div>
-        <div class="col-span-6 md:col-span-6 font-semibold text-white text-base truncate pr-2">
-          ${escapeHtml(team.name)}
+        <div class="col-span-5 sm:col-span-6 truncate pr-3 flex items-center gap-2 ${nameClass}">
+          <span class="truncate">${escapeHtml(team.name)}</span>
+          ${leaderTag}
         </div>
-        <div class="col-span-4 md:col-span-3 text-right mono font-bold text-blue-400 text-base">
+        <div class="col-span-3 sm:col-span-3 text-center sm:text-right ${timeClass}">
           ${team.formattedTime}
         </div>
-        <div class="hidden md:block md:col-span-2 text-right mono text-xs text-gray-400">
-          ${team.gap}
+        <div class="col-span-2 sm:col-span-2 text-right ${gapClass}">
+          ${team.gap || '-'}
         </div>
       </div>
-    `).join('');
-  } else {
-    restRankSection.classList.add('hidden');
-    rankListBody.innerHTML = '';
-  }
+    `;
+  }).join('');
 }
 
 // Render Split View (Both Board 1 & 2 side-by-side)

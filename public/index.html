@@ -11,7 +11,7 @@
 <body class="p-3 md:p-6 flex flex-col justify-between min-h-screen">
 
   <!-- HEADER -->
-  <header class="max-w-7xl mx-auto w-full mb-6">
+  <header class="max-w-[1700px] mx-auto w-full mb-4 sm:mb-6">
     <div class="glass-card p-4 md:p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-2xl">
       <!-- Title & Subtitle -->
       <div class="text-center md:text-left">
@@ -82,139 +82,123 @@
     </div>
   </header>
 
-  <!-- MAIN SINGLE BOARD VIEW (Board 1 or Board 2) -->
-  <main id="singleBoardView" class="max-w-7xl mx-auto w-full flex-1">
-
-    <!-- COUNTDOWN TIMER SECTION -->
-    <div class="glass-card timer-container p-6 mb-8 text-center relative overflow-hidden rounded-2xl">
-      <!-- Top Bar: Timer Title & Match Info -->
-      <div class="flex flex-col sm:flex-row items-center justify-between gap-3 mb-4">
-        <div class="flex items-center gap-2">
-          <span id="timerStatusBadge" class="px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-gray-800 text-gray-400 border border-gray-700 uppercase">
-            SIAP
-          </span>
-          <h2 id="timerTitle" class="text-sm md:text-base font-extrabold uppercase tracking-wider text-blue-400">
-            WAKTU PERTANDINGAN
-          </h2>
-        </div>
-
-        <!-- Active Matchup Teams Banner -->
-        <div id="matchupBanner" class="matchup-badge px-4 py-1.5 rounded-xl text-xs flex items-center gap-2">
-          <span class="text-blue-300 font-bold" id="matchTeamA">Kelompok A</span>
-          <span class="text-gray-400 font-extrabold text-[10px]">VS</span>
-          <span class="text-rose-300 font-bold" id="matchTeamB">Kelompok B</span>
-        </div>
-      </div>
-
-      <!-- BIG DIGITAL COUNTDOWN CLOCK -->
-      <div class="py-2">
-        <div id="countdownDigits" class="font-timer timer-digits text-5xl sm:text-7xl md:text-8xl font-black text-blue-400 tracking-wider">
-          03:00.000
-        </div>
-      </div>
-
-      <!-- Progress bar -->
-      <div class="w-full bg-gray-900 rounded-full h-2 mt-4 overflow-hidden border border-gray-800">
-        <div id="timerProgressBar" class="h-full bg-blue-500 transition-all duration-200" style="width: 100%;"></div>
-      </div>
-    </div>
-
-    <!-- EMPTY STATE -->
-    <div id="emptyState" class="hidden glass-card p-10 text-center my-8 max-w-lg mx-auto">
-      <div class="w-16 h-16 mx-auto rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 mb-3 border border-blue-500/20">
-        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-      <h3 class="text-lg font-bold text-white mb-1">Belum Ada Catatan Waktu</h3>
-      <p class="text-gray-400 text-xs mb-4">
-        Panitia belum mencatat waktu untuk leaderboard ini. Layar akan otomatis terupdate begitu panitia menyimpan waktu.
-      </p>
-      <a href="/admin" target="_blank" class="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-semibold text-xs">
-        Buka Panel Panitia &rarr;
-      </a>
-    </div>
-
-    <!-- PODIUM TOP 3 SECTION -->
-    <div id="podiumSection" class="hidden mb-8">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-5 items-end">
-
-        <!-- RANK 2 (SILVER) -->
-        <div id="podiumRank2" class="order-2 md:order-1 glass-card podium-card rank-2 p-5 flex flex-col items-center text-center">
-          <div class="w-12 h-12 rounded-2xl badge-silver flex items-center justify-center font-black text-xl mb-2">
-            2
+  <!-- MAIN SINGLE BOARD VIEW (80/20 RATIO: RANKINGS ON LEFT, TIMER ON RIGHT) -->
+  <main id="singleBoardView" class="max-w-[1700px] mx-auto w-full flex-1">
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6 items-start">
+      
+      <!-- LEFT COLUMN: RANKINGS TABLE (80% = 4 OF 5 COLS) -->
+      <div class="lg:col-span-4 w-full">
+        <div class="glass-card overflow-hidden shadow-2xl border border-gray-800/80 rounded-2xl">
+          
+          <!-- Table Header / Title Bar -->
+          <div class="px-5 py-4 bg-gray-900/90 border-b border-gray-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <div>
+              <h2 id="currentBoardDisplayName" class="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                <span>🏆 Peringkat Leaderboard</span>
+              </h2>
+              <p class="text-xs text-gray-400 mt-0.5">Waktu tercepat otomatis memegang Juara 1 (Menit : Detik . Milidetik)</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <span id="totalParticipantsBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-blue-600/30 text-blue-300 border border-blue-500/30">
+                0 Tim Terdaftar
+              </span>
+            </div>
           </div>
-          <span class="text-[11px] uppercase tracking-widest text-slate-300 font-bold mb-1">JUARA 2</span>
-          <h3 class="team-name text-lg md:text-xl font-extrabold text-white mb-2 truncate max-w-full">-</h3>
-          <div class="w-full bg-gray-900/60 rounded-xl p-3 border border-gray-800">
-            <div class="team-time mono text-xl font-black text-slate-200 tracking-wider">-</div>
-            <div class="team-gap text-xs text-gray-400 mt-1">-</div>
-          </div>
-        </div>
 
-        <!-- RANK 1 (GOLD) -->
-        <div id="podiumRank1" class="order-1 md:order-2 glass-card podium-card rank-1 p-6 md:p-8 flex flex-col items-center text-center">
-          <div class="relative mb-3">
-            <div class="absolute -top-6 left-1/2 -translate-x-1/2 text-amber-400">
-              <svg class="w-8 h-8 fill-amber-400" viewBox="0 0 24 24">
-                <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5m14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/>
+          <!-- Empty State -->
+          <div id="emptyState" class="hidden p-12 text-center">
+            <div class="w-16 h-16 mx-auto rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 mb-3 border border-blue-500/20">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <div class="w-16 h-16 md:w-20 md:h-20 rounded-2xl badge-gold flex items-center justify-center font-black text-3xl md:text-4xl text-amber-950">
-              1
+            <h3 class="text-lg font-bold text-white mb-1">Belum Ada Catatan Waktu</h3>
+            <p class="text-gray-400 text-xs max-w-sm mx-auto mb-4">
+              Panitia belum mencatat waktu untuk leaderboard ini. Layar akan terupdate otomatis begitu waktu tercatat.
+            </p>
+            <a href="/admin" target="_blank" class="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-semibold text-xs">
+              Buka Panel Panitia &rarr;
+            </a>
+          </div>
+
+          <!-- Unified Table for ALL Ranks (Rank 1 to N) -->
+          <div id="restRankSection" class="w-full overflow-x-auto">
+            <div class="min-w-[640px] divide-y divide-gray-800/60">
+              <!-- Column Titles -->
+              <div class="grid grid-cols-12 px-6 py-3 text-xs font-black uppercase tracking-wider text-gray-400 bg-gray-950/70 border-b border-gray-800">
+                <div class="col-span-2 sm:col-span-1 text-center">Rank</div>
+                <div class="col-span-5 sm:col-span-6">Nama Kelompok</div>
+                <div class="col-span-3 sm:col-span-3 text-center sm:text-right">Waktu (MM:SS.mmm)</div>
+                <div class="col-span-2 sm:col-span-2 text-right">Selisih (#1)</div>
+              </div>
+              <!-- Table Body -->
+              <div id="rankListBody"></div>
             </div>
           </div>
-          <span class="text-xs uppercase tracking-widest text-amber-400 font-extrabold mb-1">🥇 JUARA 1 TERCEPAT</span>
-          <h3 class="team-name text-xl md:text-3xl font-black text-amber-200 mb-2 truncate max-w-full">-</h3>
-          <div class="w-full bg-amber-950/30 rounded-xl p-3 md:p-4 border border-amber-500/30">
-            <div class="team-time mono text-2xl md:text-4xl font-black text-amber-400 tracking-wider">-</div>
-            <div class="team-gap text-xs text-amber-300/80 font-semibold mt-1">Catatan Waktu Terbaik</div>
-          </div>
-        </div>
 
-        <!-- RANK 3 (BRONZE) -->
-        <div id="podiumRank3" class="order-3 md:order-3 glass-card podium-card rank-3 p-5 flex flex-col items-center text-center">
-          <div class="w-12 h-12 rounded-2xl badge-bronze flex items-center justify-center font-black text-xl mb-2">
-            3
-          </div>
-          <span class="text-[11px] uppercase tracking-widest text-amber-500 font-bold mb-1">JUARA 3</span>
-          <h3 class="team-name text-lg md:text-xl font-extrabold text-white mb-2 truncate max-w-full">-</h3>
-          <div class="w-full bg-gray-900/60 rounded-xl p-3 border border-gray-800">
-            <div class="team-time mono text-xl font-black text-amber-500 tracking-wider">-</div>
-            <div class="team-gap text-xs text-gray-400 mt-1">-</div>
-          </div>
         </div>
-
       </div>
-    </div>
 
-    <!-- RANK 4+ LIST TABLE -->
-    <div id="restRankSection" class="hidden">
-      <div class="glass-card overflow-hidden shadow-2xl">
-        <div class="px-5 py-3.5 bg-gray-900/80 border-b border-gray-800 flex justify-between items-center">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-2">
-            <span>Daftar Peringkat Selanjutnya</span>
-            <span id="totalParticipantsBadge" class="px-2 py-0.5 rounded-full text-[10px] bg-gray-800 text-gray-400">0 Tim</span>
+      <!-- RIGHT COLUMN: TIMER & MATCHUP ARENA (20% = 1 OF 5 COLS) -->
+      <div class="lg:col-span-1 w-full space-y-4 lg:sticky lg:top-4">
+        
+        <!-- Timer Card -->
+        <div class="glass-card timer-container p-4 sm:p-5 text-center rounded-2xl border-t-4 border-t-blue-500 shadow-2xl flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-2">
+            <span id="timerStatusBadge" class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider bg-gray-800 text-gray-400 border border-gray-700 uppercase">
+              SIAP
+            </span>
+            <span class="text-[10px] font-bold text-blue-400 uppercase tracking-wider">⏱️ TIMER MATCH</span>
+          </div>
+
+          <h3 id="timerTitle" class="text-xs font-bold uppercase tracking-wider text-blue-300 truncate mb-1">
+            WAKTU PERTANDINGAN
           </h3>
-          <span class="text-[11px] text-gray-500">Format: Menit : Detik . Milidetik</span>
-        </div>
 
-        <div class="divide-y divide-gray-800/80">
-          <div class="grid grid-cols-12 px-5 py-2.5 text-xs font-semibold uppercase text-gray-400 bg-gray-950/40">
-            <div class="col-span-2 md:col-span-1 text-center">Rank</div>
-            <div class="col-span-6 md:col-span-6">Nama Kelompok</div>
-            <div class="col-span-4 md:col-span-3 text-right">Waktu (MM:SS.mmm)</div>
-            <div class="hidden md:block md:col-span-2 text-right">Selisih (#1)</div>
+          <!-- Big Digital Clock -->
+          <div class="py-2">
+            <div id="countdownDigits" class="font-timer timer-digits text-3xl sm:text-4xl md:text-5xl lg:text-3xl xl:text-4xl font-black text-blue-400 tracking-wider">
+              03:00.000
+            </div>
           </div>
-          <div id="rankListBody"></div>
-        </div>
-      </div>
-    </div>
 
+          <!-- Progress Bar -->
+          <div class="w-full bg-gray-900 rounded-full h-2 mt-2 overflow-hidden border border-gray-800">
+            <div id="timerProgressBar" class="h-full bg-blue-500 transition-all duration-200" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- Active Matchup Arena Card -->
+        <div id="matchupBanner" class="glass-card p-4 rounded-2xl border border-gray-800 shadow-xl space-y-2.5">
+          <div class="flex items-center justify-between border-b border-gray-800/80 pb-1.5">
+            <span class="text-[11px] font-extrabold uppercase tracking-wider text-gray-300 flex items-center gap-1.5">
+              <span>⚔️ Tanding Sekarang</span>
+            </span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </div>
+
+          <!-- Team A Box -->
+          <div class="p-2.5 rounded-xl bg-blue-950/30 border border-blue-500/40 text-left">
+            <span class="block text-[9px] font-black uppercase tracking-wider text-blue-400">JALUR A (KELOMPOK 1)</span>
+            <p id="matchTeamA" class="font-bold text-sm text-white truncate mt-0.5">Kelompok A</p>
+          </div>
+
+          <div class="text-center font-black text-[10px] text-gray-500 -my-1">VS</div>
+
+          <!-- Team B Box -->
+          <div class="p-2.5 rounded-xl bg-rose-950/30 border border-rose-500/40 text-left">
+            <span class="block text-[9px] font-black uppercase tracking-wider text-rose-400">JALUR B (KELOMPOK 2)</span>
+            <p id="matchTeamB" class="font-bold text-sm text-white truncate mt-0.5">Kelompok B</p>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
   </main>
 
   <!-- SPLIT DUAL BOARD VIEW -->
-  <main id="splitBoardView" class="max-w-7xl mx-auto w-full flex-1 hidden">
+  <main id="splitBoardView" class="max-w-[1700px] mx-auto w-full flex-1 hidden">
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Split Board 1 -->
       <div class="space-y-4">
@@ -240,7 +224,7 @@
   </main>
 
   <!-- FOOTER -->
-  <footer class="max-w-7xl mx-auto w-full mt-6 text-center text-xs text-gray-500">
+  <footer class="max-w-[1700px] mx-auto w-full mt-6 text-center text-xs text-gray-500">
     <p>Live Leaderboard & Countdown Timer &bull; Sinkronisasi Real-Time &bull; Waktu Tercepat Juara 1</p>
   </footer>
 
