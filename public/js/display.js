@@ -65,15 +65,23 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// Sound toggle
+// Sound toggle - Default UNMUTED (Suara selalu aktif)
 function toggleSound() {
   sounds.enabled = !sounds.enabled;
+  const iconOn = document.getElementById('soundIconOn');
+  const iconOff = document.getElementById('soundIconOff');
+  if (iconOn) iconOn.classList.toggle('hidden', !sounds.enabled);
+  if (iconOff) iconOff.classList.toggle('hidden', sounds.enabled);
+  localStorage.setItem('leaderboard_sound', sounds.enabled ? '1' : '0');
+  if (sounds.enabled) {
+    sounds.playUpdate();
+  }
+}
+
+// Sinkronkan ikon suara saat inisialisasi awal (Default ON)
+if (document.getElementById('soundIconOn') && document.getElementById('soundIconOff')) {
   document.getElementById('soundIconOn').classList.toggle('hidden', !sounds.enabled);
   document.getElementById('soundIconOff').classList.toggle('hidden', sounds.enabled);
-  localStorage.setItem('leaderboard_sound', sounds.enabled ? '1' : '0');
-}
-if (localStorage.getItem('leaderboard_sound') === '0') {
-  toggleSound();
 }
 
 // Fullscreen toggle

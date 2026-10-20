@@ -2,24 +2,24 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel Panitia - Leaderboard & Timer Match</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Panel Panitia - Remote Kontrol Leaderboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/css/style.css">
   <script src="/socket.io/socket.io.js"></script>
 </head>
-<body class="p-3 md:p-6 min-h-screen text-gray-200">
+<body class="p-2 sm:p-4 md:p-6 min-h-screen text-gray-200 antialiased selection:bg-blue-600 selection:text-white">
 
   <!-- PASSPHRASE AUTH SCREEN (OVERLAY IF NOT LOGGED IN) -->
   <div id="authOverlay" class="fixed inset-0 bg-gray-950/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-    <div class="glass-card max-w-md w-full p-8 border border-blue-500/30 shadow-2xl text-center">
-      <div class="w-16 h-16 mx-auto rounded-2xl bg-blue-600/20 text-blue-400 flex items-center justify-center mb-4 border border-blue-500/30">
-        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="glass-card max-w-sm w-full p-6 sm:p-8 border border-blue-500/30 shadow-2xl text-center">
+      <div class="w-14 h-14 mx-auto rounded-2xl bg-blue-600/20 text-blue-400 flex items-center justify-center mb-4 border border-blue-500/30">
+        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
         </svg>
       </div>
       <h2 class="text-xl font-extrabold text-white mb-1">Akses Panel Panitia</h2>
-      <p class="text-xs text-gray-400 mb-6">Masukkan passphrase panitia untuk membuka akses.</p>
+      <p class="text-xs text-gray-400 mb-6">Masukkan passphrase panitia untuk membuka remote kontrol.</p>
 
       <form id="authForm" onsubmit="handleLoginSubmit(event)" class="space-y-4">
         <div>
@@ -36,325 +36,495 @@
         <p id="authErrorMsg" class="text-xs text-rose-400 hidden font-semibold">Passphrase salah! Silakan coba lagi.</p>
         <button 
           type="submit" 
-          class="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-600/30 transition"
+          class="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-600/30 transition touch-btn"
         >
-          Buka Panel Panitia &rarr;
+          Buka Panel Kontrol &rarr;
         </button>
       </form>
     </div>
   </div>
 
-  <!-- TOP BAR -->
-  <header class="max-w-7xl mx-auto w-full mb-6">
-    <div class="glass-card p-4 md:p-5 flex flex-col md:flex-row items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+  <!-- MAIN CONTAINER (MOBILE FIRST CENTERED CONTROLLER DECK) -->
+  <div class="max-w-xl mx-auto w-full space-y-4">
+
+    <!-- TOP COMPACT BAR -->
+    <header class="glass-card p-3 sm:p-4 flex items-center justify-between gap-2 shadow-lg">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center border border-blue-500/30 flex-shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <div>
-          <h1 class="text-lg md:text-xl font-extrabold text-white flex items-center gap-2">
-            <span>Panel Kontrol Panitia</span>
-            <span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">TERKUNCI AMAN</span>
-          </h1>
-          <p class="text-xs text-gray-400">Kelola 2 Leaderboard, Timer Hitung Mundur, dan Pencatatan Waktu</p>
+        <div class="truncate">
+          <div class="flex items-center gap-1.5">
+            <h1 class="text-sm sm:text-base font-extrabold text-white truncate">Remote Panitia</h1>
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold flex-shrink-0">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
+              AKTIF
+            </span>
+          </div>
+          <p class="text-[11px] text-gray-400 truncate">Fokus Kontrol Timer & Pencatat Finish</p>
         </div>
       </div>
 
       <!-- Quick Action Buttons -->
-      <div class="flex flex-wrap items-center gap-2">
-        <!-- Event Settings -->
-        <button onclick="openSettingsModal()" class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300 border border-gray-700 transition">
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <!-- Manage Teams Modal Button -->
+        <button 
+          onclick="toggleTeamsModal()" 
+          class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/40 text-xs font-semibold touch-btn transition" 
+          title="Lihat & Kelola Daftar Tim"
+        >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
-          Ubah Judul
+          <span>Tim</span>
+          <span id="quickTeamCount" class="ml-0.5 px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-black">0</span>
+        </button>
+
+        <!-- Sound Toggle Button (Default Unmuted / Aktif) -->
+        <button 
+          id="soundBtn"
+          onclick="toggleSound()" 
+          class="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 touch-btn transition" 
+          title="Suara & Buzzer (Klik untuk ON/OFF atau tes suara)"
+        >
+          <svg id="soundIconOn" class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+          <svg id="soundIconOff" class="w-4 h-4 hidden text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
         </button>
 
         <!-- Open Display Screen -->
-        <button onclick="openDisplayWindow()" class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 transition">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button 
+          onclick="openDisplayWindow()" 
+          class="p-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/40 touch-btn transition" 
+          title="Buka Layar Proyektor"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
-          Buka Display Proyektor
         </button>
 
+        <!-- Event Settings -->
+        <button 
+          onclick="openSettingsModal()" 
+          class="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 touch-btn transition" 
+          title="Pengaturan Judul"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          </svg>
+        </button>
+
+        <!-- Change Password Link -->
+        <a 
+          href="/change-password" 
+          class="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-amber-400 border border-gray-700 touch-btn transition" 
+          title="Ganti Password Admin"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </a>
+
         <!-- Lock / Logout -->
-        <button onclick="handleLogout()" class="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800/40 transition" title="Kunci / Logout">
+        <button 
+          onclick="handleLogout()" 
+          class="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900 text-rose-300 border border-rose-800/40 touch-btn transition" 
+          title="Kunci / Logout"
+        >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
         </button>
       </div>
+    </header>
+
+    <!-- LEADERBOARD TABS SWITCHER (BOARD 1 VS BOARD 2) -->
+    <div class="grid grid-cols-2 gap-2">
+      <button 
+        id="adminTab1" 
+        onclick="switchAdminBoard('1')" 
+        class="board-tab active py-3 px-3 rounded-xl text-center font-extrabold text-xs sm:text-sm border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition touch-btn flex items-center justify-center gap-1.5 truncate"
+      >
+        <span class="text-base flex-shrink-0">🏆</span>
+        <span id="adminTab1Label" class="truncate">Leaderboard 1</span>
+      </button>
+      <button 
+        id="adminTab2" 
+        onclick="switchAdminBoard('2')" 
+        class="board-tab py-3 px-3 rounded-xl text-center font-extrabold text-xs sm:text-sm border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition touch-btn flex items-center justify-center gap-1.5 truncate"
+      >
+        <span class="text-base flex-shrink-0">🏆</span>
+        <span id="adminTab2Label" class="truncate">Leaderboard 2</span>
+      </button>
     </div>
-  </header>
 
-  <!-- LEADERBOARD TABS SWITCHER (PANEL 1 VS PANEL 2) -->
-  <div class="max-w-7xl mx-auto w-full mb-6 flex gap-2">
-    <button id="adminTab1" onclick="switchAdminBoard('1')" class="board-tab active flex-1 py-3 px-4 rounded-xl text-center font-extrabold text-sm border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition flex items-center justify-center gap-2">
-      <span>🏆</span>
-      <span id="adminTab1Label">Leaderboard 1 (Panel 1)</span>
-    </button>
-    <button id="adminTab2" onclick="switchAdminBoard('2')" class="board-tab flex-1 py-3 px-4 rounded-xl text-center font-extrabold text-sm border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition flex items-center justify-center gap-2">
-      <span>🏆</span>
-      <span id="adminTab2Label">Leaderboard 2 (Panel 2)</span>
-    </button>
-  </div>
-
-  <!-- MAIN CONTAINER -->
-  <main class="max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-    <!-- LEFT COLUMN: TIMER & MATCH ARENA & MANUAL INPUT (5 COLS) -->
-    <div class="lg:col-span-5 space-y-6">
-
-      <!-- 1. WIDGET TIMER HITUNG MUNDUR -->
-      <div class="glass-card timer-container p-5 border-t-4 border-t-blue-500 rounded-2xl">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-            <span>⏱️ Timer Hitung Mundur</span>
-            <span id="adminTimerStatus" class="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-300 font-bold">SIAP</span>
-          </span>
-          <button onclick="toggleTimerSetupModal()" class="text-[11px] text-gray-400 hover:text-white underline">
-            Setup Waktu
+    <!-- 1. HERO WIDGET: TIMER HITUNG MUNDUR -->
+    <section class="glass-card timer-container p-4 sm:p-5 border-t-4 border-t-blue-500 rounded-2xl shadow-xl">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+          <span>⏱️ Timer Match</span>
+          <span id="adminTimerStatus" class="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-300 font-bold uppercase">SIAP</span>
+        </span>
+        <div class="flex items-center gap-1.5">
+          <button onclick="testBuzzerSound()" class="text-[11px] px-2 py-0.5 rounded-lg bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/40 font-semibold flex items-center gap-1 touch-btn" title="Tes suara buzzer sekarang">
+            <span>🔊 Tes Buzzer</span>
           </button>
-        </div>
-
-        <div class="text-center py-2">
-          <div id="adminTimerDigits" class="font-timer timer-digits text-5xl md:text-6xl font-black text-blue-400 tracking-wider">
-            03:00.000
-          </div>
-          <p id="adminTimerTitle" class="text-xs text-gray-400 mt-1 uppercase font-semibold">Waktu Pertandingan</p>
-        </div>
-
-        <!-- Timer Action Buttons -->
-        <div class="grid grid-cols-3 gap-2 mt-3">
-          <button id="btnStartTimer" onclick="controlTimer('start')" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-1.5">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" /></svg>
-            Mulai
-          </button>
-          <button id="btnPauseTimer" onclick="controlTimer('pause')" class="py-2.5 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-1.5">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
-            Jeda
-          </button>
-          <button id="btnResetTimer" onclick="controlTimer('reset')" class="py-2.5 px-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-xs border border-gray-700 transition flex items-center justify-center gap-1.5">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-            Reset
+          <button onclick="toggleTimerSetupModal()" class="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 touch-btn">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+            <span>Atur Waktu</span>
           </button>
         </div>
       </div>
 
-      <!-- 2. WIDGET SETUP 2 KELOMPOK & CATAT WAKTU LANGSUNG DARI TIMER -->
-      <div class="glass-card p-5 border-t-4 border-t-purple-500 rounded-2xl">
-        <h3 class="text-sm font-bold text-white mb-1 flex items-center gap-2">
-          <span>⚔️ Setup 2 Kelompok & Catat Finish Langsung</span>
-        </h3>
-        <p class="text-xs text-gray-400 mb-4">
-          Klik tombol finish saat kelompok mencapai garis akhir. Waktu tempuh otomatis tercatat dari timer!
-        </p>
-
-        <!-- Setup 2 Team Names -->
-        <div class="space-y-3 mb-4">
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="block text-[11px] font-bold text-blue-400 mb-1">Kelompok 1 (Jalur A)</label>
-              <input 
-                type="text" 
-                id="matchInputTeamA" 
-                placeholder="Contoh: Tim Rajawali" 
-                class="w-full px-3 py-2 rounded-xl bg-gray-900 border border-gray-700 text-xs text-white placeholder-gray-500 outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-rose-400 mb-1">Kelompok 2 (Jalur B)</label>
-              <input 
-                type="text" 
-                id="matchInputTeamB" 
-                placeholder="Contoh: Tim Garuda" 
-                class="w-full px-3 py-2 rounded-xl bg-gray-900 border border-gray-700 text-xs text-white placeholder-gray-500 outline-none focus:border-rose-500"
-              />
-            </div>
-          </div>
-          <button onclick="saveMatchSetup()" class="w-full py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300 border border-gray-700 transition">
-            Simpan Nama Kelompok Bertanding
-          </button>
+      <!-- Giant Digits Display -->
+      <div class="text-center py-2 sm:py-3">
+        <div id="adminTimerDigits" class="font-timer timer-digits text-4xl sm:text-5xl md:text-6xl font-black text-blue-400 tracking-wider">
+          03:00.000
         </div>
+        <p id="adminTimerTitle" class="text-[11px] text-gray-400 mt-1 uppercase font-semibold tracking-wider">WAKTU PERTANDINGAN</p>
+      </div>
 
-        <!-- Quick Finish Recording Buttons -->
-        <div class="grid grid-cols-2 gap-3 pt-2 border-t border-gray-800">
-          <button 
-            onclick="recordTimeFromTimer('A')" 
-            class="py-3.5 px-3 rounded-xl bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-600 hover:to-blue-500 text-white font-extrabold text-xs shadow-lg shadow-blue-700/30 transition flex flex-col items-center justify-center gap-1 active:scale-95"
-          >
-            <span class="text-base">🏁 CATAT FINISH</span>
-            <span id="btnFinishTeamALabel" class="text-[11px] font-medium opacity-90 truncate max-w-full">Kelompok 1 (A)</span>
-          </button>
+      <!-- Big Touch Action Buttons -->
+      <div class="grid grid-cols-3 gap-2 mt-2">
+        <button 
+          id="btnStartTimer" 
+          onclick="controlTimer('start')" 
+          class="h-12 sm:h-14 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-sm sm:text-base shadow-lg shadow-emerald-600/30 transition touch-btn flex items-center justify-center gap-1.5"
+        >
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+          </svg>
+          <span>Mulai</span>
+        </button>
 
-          <button 
-            onclick="recordTimeFromTimer('B')" 
-            class="py-3.5 px-3 rounded-xl bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-600 hover:to-rose-500 text-white font-extrabold text-xs shadow-lg shadow-rose-700/30 transition flex flex-col items-center justify-center gap-1 active:scale-95"
-          >
-            <span class="text-base">🏁 CATAT FINISH</span>
-            <span id="btnFinishTeamBLabel" class="text-[11px] font-medium opacity-90 truncate max-w-full">Kelompok 2 (B)</span>
-          </button>
+        <button 
+          id="btnPauseTimer" 
+          onclick="controlTimer('pause')" 
+          class="h-12 sm:h-14 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-extrabold text-sm sm:text-base shadow-lg shadow-amber-600/30 transition touch-btn flex items-center justify-center gap-1.5"
+        >
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+          <span>Jeda</span>
+        </button>
+
+        <button 
+          id="btnResetTimer" 
+          onclick="controlTimer('reset')" 
+          class="h-12 sm:h-14 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 font-extrabold text-sm sm:text-base border border-gray-700 transition touch-btn flex items-center justify-center gap-1.5"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <span>Reset</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 2. HERO WIDGET: ARENA TANDING & TOMBOL FINISH INSTAN -->
+    <section class="glass-card p-4 sm:p-5 border-t-4 border-t-purple-500 rounded-2xl shadow-xl space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-sm sm:text-base font-extrabold text-white flex items-center gap-2">
+            <span>⚔️ Arena Tanding & Catat Finish</span>
+          </h2>
+          <p class="text-[11px] text-gray-400 mt-0.5">
+            Tekan tombol finish saat tim melintasi garis akhir. Waktu otomatis tercatat dari timer!
+          </p>
         </div>
       </div>
 
-      <!-- 3. MANUAL INPUT FORM ACCORDION -->
-      <details class="glass-card p-5 rounded-2xl group">
-        <summary class="cursor-pointer text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center justify-between list-none">
-          <span class="flex items-center gap-2">
-            <span>✍️ Input / Tambah Manual (Menit : Detik . Mili)</span>
+      <!-- Team Name Inputs -->
+      <div class="grid grid-cols-2 gap-2.5">
+        <!-- Team A Box -->
+        <div class="p-2.5 rounded-xl bg-blue-950/20 border border-blue-500/30">
+          <label class="block text-[11px] font-extrabold text-blue-400 mb-1 flex items-center gap-1 truncate">
+            <span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0"></span>
+            <span>Jalur A (Kelompok 1)</span>
+          </label>
+          <input 
+            type="text" 
+            id="matchInputTeamA" 
+            placeholder="Nama Tim A..." 
+            class="w-full px-3 py-2.5 rounded-lg bg-gray-900 border border-blue-500/40 text-xs sm:text-sm text-white placeholder-gray-500 outline-none focus:border-blue-400 font-semibold"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Team B Box -->
+        <div class="p-2.5 rounded-xl bg-rose-950/20 border border-rose-500/30">
+          <label class="block text-[11px] font-extrabold text-rose-400 mb-1 flex items-center gap-1 truncate">
+            <span class="w-2 h-2 rounded-full bg-rose-400 flex-shrink-0"></span>
+            <span>Jalur B (Kelompok 2)</span>
+          </label>
+          <input 
+            type="text" 
+            id="matchInputTeamB" 
+            placeholder="Nama Tim B..." 
+            class="w-full px-3 py-2.5 rounded-lg bg-gray-900 border border-rose-500/40 text-xs sm:text-sm text-white placeholder-gray-500 outline-none focus:border-rose-400 font-semibold"
+            autocomplete="off"
+          />
+        </div>
+      </div>
+
+      <button 
+        onclick="saveMatchSetup()" 
+        class="w-full py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-bold text-gray-200 border border-gray-700 transition touch-btn flex items-center justify-center gap-1.5"
+      >
+        <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+        </svg>
+        <span>Simpan Nama Pasangan Bertanding</span>
+      </button>
+
+      <!-- GIANT FINISH RECORDING BUTTONS (THUMB PADS) -->
+      <div class="grid grid-cols-2 gap-3 pt-2 border-t border-gray-800">
+        <!-- Finish Team A Button -->
+        <button 
+          onclick="recordTimeFromTimer('A')" 
+          class="min-h-[76px] sm:min-h-[84px] p-3 rounded-2xl bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 border border-blue-400/40 text-white font-black shadow-xl shadow-blue-700/30 transition touch-btn flex flex-col items-center justify-center gap-1 text-center"
+        >
+          <span class="text-sm sm:text-base flex items-center gap-1.5 tracking-wide">
+            <span>🏁</span>
+            <span>FINISH A</span>
           </span>
-          <span class="text-gray-500 text-xs group-open:rotate-180 transition-transform">&darr;</span>
-        </summary>
+          <span id="btnFinishTeamALabel" class="text-xs font-medium text-blue-100 truncate max-w-full px-1">
+            Kelompok 1 (A)
+          </span>
+        </button>
 
-        <form id="addTeamForm" onsubmit="handleAddTeam(event)" class="space-y-3 mt-4">
-          <div>
-            <label class="block text-[11px] font-bold text-gray-300 mb-1">Nama Kelompok</label>
-            <input 
-              type="text" 
-              id="teamName" 
-              required
-              placeholder="Contoh: Kelompok Harimau" 
-              class="w-full px-3 py-2 rounded-xl bg-gray-900 border border-gray-700 text-white text-xs outline-none focus:border-blue-500"
-            />
-          </div>
+        <!-- Finish Team B Button -->
+        <button 
+          onclick="recordTimeFromTimer('B')" 
+          class="min-h-[76px] sm:min-h-[84px] p-3 rounded-2xl bg-gradient-to-b from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 border border-rose-400/40 text-white font-black shadow-xl shadow-rose-700/30 transition touch-btn flex flex-col items-center justify-center gap-1 text-center"
+        >
+          <span class="text-sm sm:text-base flex items-center gap-1.5 tracking-wide">
+            <span>🏁</span>
+            <span>FINISH B</span>
+          </span>
+          <span id="btnFinishTeamBLabel" class="text-xs font-medium text-rose-100 truncate max-w-full px-1">
+            Kelompok 2 (B)
+          </span>
+        </button>
+      </div>
 
-          <div>
-            <label class="block text-[11px] font-bold text-gray-300 mb-1">Waktu (Menit : Detik . Mili)</label>
-            <div class="grid grid-cols-3 gap-2">
-              <div>
-                <span class="block text-[10px] text-gray-400 text-center mb-0.5">Menit</span>
-                <input type="number" id="timeMin" min="0" max="99" value="0" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
-              </div>
-              <div>
-                <span class="block text-[10px] text-gray-400 text-center mb-0.5">Detik</span>
-                <input type="number" id="timeSec" min="0" max="59" value="0" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
-              </div>
-              <div>
-                <span class="block text-[10px] text-gray-400 text-center mb-0.5">Mili</span>
-                <input type="number" id="timeMs" min="0" max="999" value="000" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
-              </div>
+      <!-- Instant Feedback Banner -->
+      <div id="lastRecordedBanner" class="hidden p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-2 text-center animate-pulse">
+        <svg class="w-4 h-4 flex-shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+        </svg>
+        <span id="lastRecordedText">Waktu berhasil dicatat!</span>
+      </div>
+    </section>
+
+    <!-- 3. COLLAPSIBLE ACCORDION: INPUT MANUAL (MENIT : DETIK . MILI) -->
+    <details class="glass-card p-4 rounded-2xl group border border-gray-800">
+      <summary class="cursor-pointer text-xs font-extrabold uppercase tracking-wider text-gray-300 flex items-center justify-between list-none touch-btn py-1">
+        <span class="flex items-center gap-2">
+          <span>✍️ Input Waktu Manual</span>
+        </span>
+        <span class="text-gray-400 text-xs group-open:rotate-180 transition-transform duration-200">&darr;</span>
+      </summary>
+
+      <form id="addTeamForm" onsubmit="handleAddTeam(event)" class="space-y-3 mt-4 pt-3 border-t border-gray-800">
+        <div>
+          <label class="block text-xs font-bold text-gray-300 mb-1">Nama Kelompok</label>
+          <input 
+            type="text" 
+            id="teamName" 
+            required
+            placeholder="Contoh: Kelompok Harimau" 
+            class="w-full px-3 py-2.5 rounded-xl bg-gray-900 border border-gray-700 text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium"
+          />
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-gray-300 mb-1">Waktu (Menit : Detik . Mili)</label>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <span class="block text-[10px] text-gray-400 text-center mb-0.5">Menit</span>
+              <input type="number" id="timeMin" min="0" max="99" value="0" class="w-full p-2.5 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
             </div>
-            <div class="mt-2 text-right">
-              <span class="text-xs text-gray-400">Pratinjau: </span>
-              <span id="timePreview" class="mono font-bold text-blue-400 text-xs">00:00.000</span>
+            <div>
+              <span class="block text-[10px] text-gray-400 text-center mb-0.5">Detik</span>
+              <input type="number" id="timeSec" min="0" max="59" value="0" class="w-full p-2.5 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-gray-400 text-center mb-0.5">Mili</span>
+              <input type="number" id="timeMs" min="0" max="999" value="000" class="w-full p-2.5 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
             </div>
           </div>
+          <div class="mt-2 text-right">
+            <span class="text-xs text-gray-400">Pratinjau: </span>
+            <span id="timePreview" class="mono font-bold text-blue-400 text-xs">00:00.000</span>
+          </div>
+        </div>
 
-          <button type="submit" class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition">
-            Simpan Catatan Waktu
-          </button>
-        </form>
-      </details>
+        <button type="submit" class="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/30 transition touch-btn">
+          Simpan Catatan Waktu Manual
+        </button>
+      </form>
+    </details>
 
-      <!-- 4. CSV & TOOLS -->
-      <div class="glass-card p-5 space-y-3">
-        <h4 class="text-xs font-bold uppercase tracking-wider text-gray-400">Berkas CSV & Reset</h4>
+    <!-- 4. QUICK TOOLS & DATA ACCORDION -->
+    <details class="glass-card p-4 rounded-2xl group border border-gray-800">
+      <summary class="cursor-pointer text-xs font-extrabold uppercase tracking-wider text-gray-300 flex items-center justify-between list-none touch-btn py-1">
+        <span class="flex items-center gap-2">
+          <span>⚙️ Kelola Data Tim & Alat</span>
+        </span>
+        <span class="text-gray-400 text-xs group-open:rotate-180 transition-transform duration-200">&darr;</span>
+      </summary>
+
+      <div class="mt-4 pt-3 border-t border-gray-800 space-y-2.5">
+        <!-- Open Manage Teams Modal Button -->
+        <button 
+          onclick="toggleTeamsModal()" 
+          class="w-full py-2.5 px-3 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 font-bold text-xs border border-blue-500/30 flex items-center justify-center gap-2 touch-btn"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+          <span>Buka Pengelola / Riwayat Tim</span>
+        </button>
+
         <div class="grid grid-cols-2 gap-2">
-          <button onclick="handleExportCsv()" class="p-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold border border-gray-700 flex items-center justify-center gap-1.5">
+          <button onclick="handleExportCsv()" class="p-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold border border-gray-700 flex items-center justify-center gap-1.5 touch-btn">
             <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             Export CSV
           </button>
-          <button onclick="openImportModal()" class="p-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold border border-gray-700 flex items-center justify-center gap-1.5">
+          <button onclick="openImportModal()" class="p-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold border border-gray-700 flex items-center justify-center gap-1.5 touch-btn">
             <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" /></svg>
-            Load / Import CSV
+            Import CSV
           </button>
         </div>
+
         <div class="grid grid-cols-2 gap-2 pt-1">
-          <button onclick="populateDemoData()" class="p-2 rounded-xl bg-purple-950/30 hover:bg-purple-900/50 text-purple-300 text-[11px] font-semibold border border-purple-800/40">
+          <button onclick="populateDemoData()" class="p-2 rounded-xl bg-purple-950/30 hover:bg-purple-900/50 text-purple-300 text-[11px] font-semibold border border-purple-800/40 touch-btn">
             ✨ Isi Data Contoh
           </button>
-          <button onclick="confirmResetAll()" class="p-2 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 text-[11px] font-semibold border border-rose-800/30">
+          <button onclick="confirmResetAll()" class="p-2 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 text-[11px] font-semibold border border-rose-800/30 touch-btn">
             🗑️ Reset Board Ini
           </button>
         </div>
+
+        <div class="pt-1.5 border-t border-gray-800">
+          <a href="/change-password" class="w-full py-2.5 px-3 rounded-xl bg-amber-950/30 hover:bg-amber-900/50 text-amber-300 font-bold text-xs border border-amber-800/40 flex items-center justify-center gap-2 touch-btn transition">
+            <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            <span>🔑 Ganti Password Admin</span>
+          </a>
+        </div>
+      </div>
+    </details>
+
+  </div>
+
+  <!-- DEDICATED MODAL: KELOLA & RIWAYAT TIM (TIDAK MENGOTORI TAMPILAN DASHBOARD KONTROL) -->
+  <div id="manageTeamsModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 hidden">
+    <div class="glass-card max-w-2xl w-full p-4 sm:p-6 border border-gray-700 shadow-2xl rounded-2xl max-h-[92vh] flex flex-col modal-enter">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-gray-800">
+        <div>
+          <h3 id="currentBoardHeaderTitle" class="font-extrabold text-white text-sm sm:text-base flex items-center gap-2">
+            Kelola Tim Leaderboard
+          </h3>
+          <p class="text-[11px] text-gray-400">Total: <span id="teamCount" class="font-bold text-blue-400">0</span> tim terdaftar</p>
+        </div>
+        <button onclick="closeTeamsModal()" class="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white touch-btn">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
       </div>
 
-    </div>
+      <!-- Search Input -->
+      <div class="py-3">
+        <input 
+          type="text" 
+          id="searchTeam" 
+          oninput="handleSearch(this.value)" 
+          placeholder="Cari nama kelompok..." 
+          class="w-full px-3 py-2 rounded-xl bg-gray-900 border border-gray-700 text-xs sm:text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500 font-medium"
+        />
+      </div>
 
-    <!-- RIGHT COLUMN: LEADERBOARD TABLE (7 COLS) -->
-    <div class="lg:col-span-7">
-      <div class="glass-card overflow-hidden">
-        <div class="p-4 border-b border-gray-800 flex flex-col sm:flex-row justify-between items-center gap-3">
-          <div>
-            <h3 id="currentBoardHeaderTitle" class="font-extrabold text-white text-base">Peringkat Leaderboard 1</h3>
-            <p class="text-xs text-gray-400">Total: <span id="teamCount">0</span> kelompok terdaftar</p>
-          </div>
-          <div class="w-full sm:w-56">
-            <input 
-              type="text" 
-              id="searchTeam" 
-              oninput="handleSearch(this.value)" 
-              placeholder="Cari kelompok..." 
-              class="w-full px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-xs text-white placeholder-gray-500 outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-gray-950/60 text-gray-400 uppercase tracking-wider border-b border-gray-800">
-              <tr>
-                <th class="py-3 px-3 text-center w-12">Rank</th>
-                <th class="py-3 px-3">Nama Kelompok</th>
-                <th class="py-3 px-3 text-center">Waktu (MM:SS.mmm)</th>
-                <th class="py-3 px-3 text-center">Selisih</th>
-                <th class="py-3 px-3 text-center w-24">Aksi</th>
-              </tr>
-            </thead>
-            <tbody id="adminTableBody" class="divide-y divide-gray-800/60"></tbody>
-          </table>
-        </div>
-
+      <!-- Scrollable Table -->
+      <div class="overflow-y-auto flex-1 border border-gray-800 rounded-xl">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-gray-950/80 sticky top-0 text-gray-400 uppercase tracking-wider border-b border-gray-800 z-10 backdrop-blur-sm">
+            <tr>
+              <th class="py-2.5 px-2 sm:px-3 text-center w-10">#</th>
+              <th class="py-2.5 px-2 sm:px-3">Kelompok</th>
+              <th class="py-2.5 px-2 sm:px-3 text-center">Waktu</th>
+              <th class="py-2.5 px-2 sm:px-3 text-center hidden sm:table-cell">Selisih</th>
+              <th class="py-2.5 px-2 sm:px-3 text-center w-24">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="adminTableBody" class="divide-y divide-gray-800/60"></tbody>
+        </table>
+        
         <div id="tableEmptyState" class="p-8 text-center text-gray-500 text-xs hidden">
           Belum ada catatan waktu di leaderboard ini.
         </div>
       </div>
-    </div>
 
-  </main>
+      <!-- Modal Footer -->
+      <div class="flex justify-end pt-3 border-t border-gray-800 mt-3">
+        <button onclick="closeTeamsModal()" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold touch-btn">
+          Tutup
+        </button>
+      </div>
+
+    </div>
+  </div>
 
   <!-- MODAL: TIMER SETUP -->
-  <div id="timerSetupModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="glass-card max-w-sm w-full p-6 border border-gray-700 shadow-2xl">
-      <h3 class="text-base font-bold text-white mb-3">⏱️ Atur Durasi & Judul Timer</h3>
+  <div id="timerSetupModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="glass-card max-w-sm w-full p-5 sm:p-6 border border-gray-700 shadow-2xl modal-enter">
+      <h3 class="text-sm sm:text-base font-bold text-white mb-3">⏱️ Atur Durasi & Judul Timer</h3>
       <form onsubmit="handleSaveTimerSetup(event)" class="space-y-4">
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Judul Timer</label>
-          <input type="text" id="setupTimerTitle" required placeholder="Contoh: BABAK PENYISIHAN" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs outline-none focus:border-blue-500" />
+          <input type="text" id="setupTimerTitle" required placeholder="Contoh: BABAK PENYISIHAN" class="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Durasi Hitung Mundur</label>
           <div class="grid grid-cols-2 gap-2">
             <div>
               <span class="block text-[10px] text-gray-400 text-center mb-0.5">Menit</span>
-              <input type="number" id="setupTimerMin" min="0" max="180" value="3" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
+              <input type="number" id="setupTimerMin" min="0" max="180" value="3" class="w-full p-2.5 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
             </div>
             <div>
               <span class="block text-[10px] text-gray-400 text-center mb-0.5">Detik</span>
-              <input type="number" id="setupTimerSec" min="0" max="59" value="0" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
+              <input type="number" id="setupTimerSec" min="0" max="59" value="0" class="w-full p-2.5 bg-gray-900 border border-gray-700 rounded-lg text-center mono font-bold text-white text-sm" />
             </div>
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-2">
-          <button type="button" onclick="toggleTimerSetupModal()" class="px-3 py-1.5 bg-gray-800 text-gray-300 rounded-lg text-xs font-semibold">Batal</button>
-          <button type="submit" class="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold">Terapkan</button>
+          <button type="button" onclick="toggleTimerSetupModal()" class="px-3.5 py-2 bg-gray-800 text-gray-300 rounded-xl text-xs font-semibold touch-btn">Batal</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold touch-btn">Terapkan</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- MODAL: EDIT TEAM -->
-  <div id="editModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="glass-card max-w-md w-full p-6 border border-gray-700 shadow-2xl">
-      <h3 class="text-base font-bold text-white mb-4">Edit Data Kelompok</h3>
+  <div id="editModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="glass-card max-w-sm sm:max-w-md w-full p-5 sm:p-6 border border-gray-700 shadow-2xl modal-enter">
+      <h3 class="text-sm sm:text-base font-bold text-white mb-4">Edit Data Kelompok</h3>
       <form onsubmit="handleSaveEdit(event)" class="space-y-4">
         <input type="hidden" id="editTeamId" />
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Nama Kelompok</label>
-          <input type="text" id="editTeamName" required class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs outline-none focus:border-blue-500" />
+          <input type="text" id="editTeamName" required class="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Catatan Waktu</label>
@@ -374,54 +544,54 @@
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-2">
-          <button type="button" onclick="closeEditModal()" class="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold">Batal</button>
-          <button type="submit" class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold">Simpan</button>
+          <button type="button" onclick="closeEditModal()" class="px-3.5 py-2 rounded-xl bg-gray-800 text-gray-300 text-xs font-semibold touch-btn">Batal</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold touch-btn">Simpan</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- MODAL: SETTINGS (EVENT & BOARD TITLE) -->
-  <div id="settingsModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="glass-card max-w-md w-full p-6 border border-gray-700 shadow-2xl">
-      <h3 class="text-base font-bold text-white mb-4">Pengaturan Nama Acara & Leaderboard</h3>
+  <div id="settingsModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="glass-card max-w-sm sm:max-w-md w-full p-5 sm:p-6 border border-gray-700 shadow-2xl modal-enter">
+      <h3 class="text-sm sm:text-base font-bold text-white mb-4">Pengaturan Nama Acara & Leaderboard</h3>
       <form onsubmit="handleSaveSettings(event)" class="space-y-4">
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Judul Acara Utama</label>
-          <input type="text" id="settingEventName" required class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs outline-none focus:border-blue-500" />
+          <input type="text" id="settingEventName" required class="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">Sub Judul Acara</label>
-          <input type="text" id="settingEventSubtitle" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs outline-none focus:border-blue-500" />
+          <input type="text" id="settingEventSubtitle" class="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium" />
         </div>
         <div class="pt-2 border-t border-gray-800">
           <label class="block text-xs font-semibold text-blue-400 mb-1">Nama Board Aktif Saat Ini</label>
-          <input type="text" id="settingBoardName" required class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs outline-none focus:border-blue-500" />
+          <input type="text" id="settingBoardName" required class="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-white text-xs sm:text-sm outline-none focus:border-blue-500 font-medium" />
         </div>
         <div class="flex justify-end gap-2 pt-2">
-          <button type="button" onclick="closeSettingsModal()" class="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold">Tutup</button>
-          <button type="submit" class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold">Terapkan</button>
+          <button type="button" onclick="closeSettingsModal()" class="px-3.5 py-2 rounded-xl bg-gray-800 text-gray-300 text-xs font-semibold touch-btn">Tutup</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold touch-btn">Terapkan</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- MODAL: IMPORT CSV -->
-  <div id="importModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="glass-card max-w-xl w-full p-6 border border-gray-700 shadow-2xl max-h-[90vh] flex flex-col">
-      <h3 class="text-base font-bold text-white mb-1">Load / Import CSV ke Board Ini</h3>
+  <div id="importModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="glass-card max-w-xl w-full p-5 sm:p-6 border border-gray-700 shadow-2xl max-h-[90vh] flex flex-col modal-enter">
+      <h3 class="text-sm sm:text-base font-bold text-white mb-1">Load / Import CSV ke Board Ini</h3>
       <p class="text-xs text-gray-400 mb-4">Pilih file CSV untuk dimuat ke dalam leaderboard yang sedang aktif.</p>
 
       <div class="space-y-3 flex-1 overflow-y-auto">
-        <div class="p-6 border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-2xl text-center cursor-pointer bg-gray-950/40" onclick="document.getElementById('csvFileInput').click()">
+        <div class="p-6 border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-2xl text-center cursor-pointer bg-gray-950/40 touch-btn" onclick="document.getElementById('csvFileInput').click()">
           <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="handleCsvFileSelected(event)" />
-          <p class="text-xs text-gray-300 font-semibold">Pilih Berkas CSV</p>
+          <p class="text-xs text-gray-300 font-semibold">📁 Pilih Berkas CSV</p>
         </div>
 
         <div id="csvPreviewArea" class="hidden">
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-bold text-gray-300">Pratinjau: <span id="csvRowCount">0</span> baris</span>
-            <select id="importModeSelect" class="bg-gray-900 border border-gray-700 text-xs rounded px-2 py-1 text-white">
+            <select id="importModeSelect" class="bg-gray-900 border border-gray-700 text-xs rounded-lg px-2 py-1 text-white">
               <option value="replace">Ganti Semua (Replace)</option>
               <option value="append">Tambahkan (Append)</option>
             </select>
@@ -435,16 +605,17 @@
       </div>
 
       <div class="flex justify-end gap-2 pt-3 border-t border-gray-800 mt-3">
-        <button type="button" onclick="closeImportModal()" class="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 text-xs">Batal</button>
-        <button type="button" id="btnConfirmImport" onclick="executeImport()" disabled class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-40">Impor</button>
+        <button type="button" onclick="closeImportModal()" class="px-3.5 py-2 rounded-xl bg-gray-800 text-gray-300 text-xs touch-btn">Batal</button>
+        <button type="button" id="btnConfirmImport" onclick="executeImport()" disabled class="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold disabled:opacity-40 touch-btn">Impor</button>
       </div>
     </div>
   </div>
 
   <!-- TOAST CONTAINER -->
-  <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+  <div id="toastContainer" class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:bottom-6 z-[200] flex flex-col gap-2 pointer-events-none"></div>
 
   <!-- SCRIPTS -->
+  <script src="/js/sound.js"></script>
   <script src="/js/admin.js"></script>
 </body>
 </html>

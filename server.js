@@ -12,7 +12,7 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const PASSPHRASE = 'qoisganteng123';
+const DEFAULT_PASSPHRASE = 'qoisganteng123';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'leaderboard.json');
 
@@ -45,7 +45,7 @@ function createDefaultBoard(id, name, subtitle) {
 
 // Initial state template
 const DEFAULT_DATA = {
-  passphrase: PASSPHRASE,
+  passphrase: DEFAULT_PASSPHRASE,
   settings: {
     eventName: "LEADERBOARD & TIMER KOMPETISI",
     subTitle: "Waktu Tercepat Menjadi Juara 1"
@@ -63,7 +63,7 @@ function loadData() {
       const raw = fs.readFileSync(DATA_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       return {
-        passphrase: PASSPHRASE,
+        passphrase: (parsed && parsed.passphrase) ? parsed.passphrase : DEFAULT_PASSPHRASE,
         settings: { ...DEFAULT_DATA.settings, ...(parsed.settings || {}) },
         boards: {
           "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(parsed.boards ? parsed.boards["1"] : {}) },
@@ -139,7 +139,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Passphrase Auth Middleware for Protected Routes
 function requirePassphrase(req, res, next) {
   const clientPass = req.headers['x-passphrase'] || req.query.passphrase || req.body.passphrase;
-  if (clientPass !== PASSPHRASE) {
+  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
+  if (clientPass !== activePass) {
     return res.status(401).json({ error: 'Akses ditolak. Passphrase panitia salah atau belum dimasukkan.' });
   }
   next();
@@ -156,6 +157,10 @@ app.get('/display', (req, res) => {
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/change-password', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'change-password.html'));
 });
 
 // Helper to get full sanitized response
@@ -215,11 +220,43 @@ setInterval(() => {
 // 1. Auth Endpoint
 app.post('/api/auth/login', (req, res) => {
   const { passphrase } = req.body;
-  if (passphrase === PASSPHRASE) {
+  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
+  if (passphrase === activePass) {
     res.json({ success: true, message: 'Autentikasi berhasil.' });
   } else {
     res.status(401).json({ error: 'Passphrase salah!' });
   }
+});
+
+// 1b. Change Password Endpoint
+app.post('/api/auth/change-password', (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
+
+  if (!currentPassword) {
+    return res.status(400).json({ error: 'Password saat ini harus diisi.' });
+  }
+
+  if (currentPassword !== activePass) {
+    return res.status(401).json({ error: 'Password saat ini salah!' });
+  }
+
+  if (!newPassword || newPassword.trim() === '') {
+    return res.status(400).json({ error: 'Password baru tidak boleh kosong.' });
+  }
+
+  if (newPassword.trim().length < 4) {
+    return res.status(400).json({ error: 'Password baru minimal 4 karakter.' });
+  }
+
+  if (newPassword.trim() === currentPassword) {
+    return res.status(400).json({ error: 'Password baru harus berbeda dari password sekarang.' });
+  }
+
+  state.passphrase = newPassword.trim();
+  saveData(state);
+
+  res.json({ success: true, message: 'Password admin berhasil diperbarui!' });
 });
 
 // 2. Get current state (public)
@@ -596,11 +633,13 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, () => {
+  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
   console.log(`====================================================`);
   console.log(`🏆 LEADERBOARD APP (MULTI-BOARD & TIMER RUNNING)`);
-  console.log(`🔒 Passphrase Panitia        : ${PASSPHRASE}`);
+  console.log(`🔒 Passphrase Panitia        : ${activePass}`);
   console.log(`📺 Layar Display Proyektor   : http://localhost:${PORT}/display`);
   console.log(`⚙️  Panel Panitia 1           : http://localhost:${PORT}/admin?board=1`);
   console.log(`⚙️  Panel Panitia 2           : http://localhost:${PORT}/admin?board=2`);
+  console.log(`🔑 Ganti Password            : http://localhost:${PORT}/change-password`);
   console.log(`====================================================`);
 });

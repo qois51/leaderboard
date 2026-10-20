@@ -306,7 +306,9 @@ function renderTableData(teams) {
   const query = searchQuery.trim().toLowerCase();
   const filtered = teams.filter(t => t.name.toLowerCase().includes(query));
 
-  teamCount.textContent = teams.length;
+  if (teamCount) teamCount.textContent = teams.length;
+  const quickTeamCount = document.getElementById('quickTeamCount');
+  if (quickTeamCount) quickTeamCount.textContent = teams.length;
 
   if (filtered.length === 0) {
     adminTableBody.innerHTML = '';
@@ -325,21 +327,21 @@ function renderTableData(teams) {
       <tr class="hover:bg-gray-800/40 transition">
         <td class="py-2.5 px-3 text-center">${rankBadge}</td>
         <td class="py-2.5 px-3 font-semibold text-white">
-          <div class="truncate max-w-[180px] md:max-w-[240px]" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</div>
+          <div class="truncate max-w-[150px] sm:max-w-[200px]" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</div>
         </td>
-        <td class="py-2.5 px-3 text-center mono font-bold text-blue-400 text-sm">
+        <td class="py-2.5 px-3 text-center mono font-bold text-blue-400 text-xs sm:text-sm">
           ${t.formattedTime}
         </td>
-        <td class="py-2.5 px-3 text-center mono text-[11px] text-gray-400">
+        <td class="py-2.5 px-3 text-center mono text-[11px] text-gray-400 hidden sm:table-cell">
           ${t.gap}
         </td>
         <td class="py-2.5 px-3 text-center">
-          <div class="flex items-center justify-center gap-1">
-            <button onclick="openEditModal('${t.id}')" class="p-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white" title="Edit Data">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+          <div class="flex items-center justify-center gap-1.5">
+            <button onclick="openEditModal('${t.id}')" class="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition touch-btn flex items-center justify-center" title="Edit Data">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
             </button>
-            <button onclick="handleDeleteTeam('${t.id}', '${escapeHtml(t.name)}')" class="p-1 rounded bg-rose-950/40 hover:bg-rose-900 text-rose-400" title="Hapus Data">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            <button onclick="handleDeleteTeam('${t.id}', '${escapeHtml(t.name)}')" class="p-2 rounded-lg bg-rose-950/50 hover:bg-rose-900 text-rose-400 hover:text-rose-200 transition touch-btn flex items-center justify-center" title="Hapus Data">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
         </td>
@@ -466,6 +468,13 @@ async function recordTimeFromTimer(teamType) {
       matchInputTeamA.value = teamA;
       matchInputTeamB.value = teamB;
       updateMatchButtonLabels();
+
+      const banner = document.getElementById('lastRecordedBanner');
+      const bannerText = document.getElementById('lastRecordedText');
+      if (banner && bannerText && result.message) {
+        banner.classList.remove('hidden');
+        bannerText.textContent = result.message;
+      }
     } else {
       showToast(result.error || 'Gagal mencatat waktu', 'error');
     }
@@ -501,6 +510,13 @@ async function handleAddTeam(e) {
       timeMsInput.value = '000';
       updateLiveTimePreview();
       teamNameInput.focus();
+
+      const banner = document.getElementById('lastRecordedBanner');
+      const bannerText = document.getElementById('lastRecordedText');
+      if (banner && bannerText && result.message) {
+        banner.classList.remove('hidden');
+        bannerText.textContent = result.message;
+      }
     } else {
       showToast(result.error || 'Gagal menyimpan data.', 'error');
     }
@@ -566,6 +582,27 @@ async function handleDeleteTeam(id, name) {
     }
   } catch (e) {
     showToast('Gagal menghapus data', 'error');
+  }
+}
+
+// ========================
+// MANAGE TEAMS MODAL (MOBILE FRIENDLY)
+// ========================
+function toggleTeamsModal() {
+  const modal = document.getElementById('manageTeamsModal');
+  if (modal) {
+    modal.classList.toggle('hidden');
+    if (!modal.classList.contains('hidden')) {
+      const searchInput = document.getElementById('searchTeam');
+      if (searchInput) searchInput.focus();
+    }
+  }
+}
+
+function closeTeamsModal() {
+  const modal = document.getElementById('manageTeamsModal');
+  if (modal) {
+    modal.classList.add('hidden');
   }
 }
 
@@ -773,6 +810,49 @@ async function executeImport() {
   }
 }
 
+// Sound toggle for Admin
+function toggleSound() {
+  if (typeof sounds === 'undefined') return;
+  sounds.enabled = !sounds.enabled;
+  localStorage.setItem('leaderboard_sound', sounds.enabled ? '1' : '0');
+
+  const iconOn = document.getElementById('soundIconOn');
+  const iconOff = document.getElementById('soundIconOff');
+  if (iconOn) iconOn.classList.toggle('hidden', !sounds.enabled);
+  if (iconOff) iconOff.classList.toggle('hidden', sounds.enabled);
+
+  if (sounds.enabled) {
+    sounds.playUpdate();
+    showToast('🔊 Suara aktif! Buzzer akan berbunyi saat timer habis.');
+  } else {
+    showToast('🔇 Suara dinonaktifkan.');
+  }
+}
+
+// Tombol tes bunyi buzzer langsung
+function testBuzzerSound() {
+  if (typeof sounds === 'undefined') return;
+  sounds.enabled = true;
+  localStorage.setItem('leaderboard_sound', '1');
+  const iconOn = document.getElementById('soundIconOn');
+  const iconOff = document.getElementById('soundIconOff');
+  if (iconOn) iconOn.classList.remove('hidden');
+  if (iconOff) iconOff.classList.add('hidden');
+
+  sounds.playBuzzer();
+  showToast('📢 Tes suara buzzer waktu habis dibunyikan!');
+}
+
+// Inisialisasi status ikon suara awal (Default ON)
+if (typeof sounds !== 'undefined') {
+  const iconOn = document.getElementById('soundIconOn');
+  const iconOff = document.getElementById('soundIconOff');
+  if (iconOn && iconOff) {
+    iconOn.classList.toggle('hidden', !sounds.enabled);
+    iconOff.classList.toggle('hidden', sounds.enabled);
+  }
+}
+
 // Escape HTML
 function escapeHtml(str) {
   if (!str) return '';
@@ -804,5 +884,20 @@ socket.on('timer_tick', (payload) => {
       adminTimerStatus.textContent = 'BERJALAN';
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
     }
+  }
+});
+
+// Suara timer ketika pertandingan dimulai
+socket.on('timer_started', (payload) => {
+  if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
+    sounds.playWhistle();
+  }
+});
+
+// Suara buzzer waktu habis (00:00)
+socket.on('timer_finished', (payload) => {
+  if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
+    sounds.playBuzzer();
+    showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
   }
 });
