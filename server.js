@@ -246,7 +246,6 @@ async function syncSettingsUpdate() {
 async function saveAllToSupabase() {
   if (!supabase) return;
   try {
-    await syncSettingsUpdate();
     for (const bId of ['1', '2']) {
       await syncBoardUpdate(bId);
       const b = state.boards[bId];
@@ -414,10 +413,22 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Passphrase Auth Middleware for Protected Routes
-function requirePassphrase(req, res, next) {
-  const clientPass = req.headers['x-passphrase'] || req.query.passphrase || req.body.passphrase;
-  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
-  if (clientPass !== activePass) {
+async function requirePassphrase(req, res, next) {
+  const clientPass = String(req.headers['x-passphrase'] || req.query.passphrase || req.body?.passphrase || '').trim();
+  let authoritativePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
+
+  // Jika tidak sama dengan cache in-memory, verifikasi langsung ke database Supabase
+  if (clientPass !== authoritativePass && supabase) {
+    try {
+      const { data } = await supabase.from('settings').select('passphrase').limit(1).maybeSingle();
+      if (data && data.passphrase) {
+        authoritativePass = String(data.passphrase).trim();
+        state.passphrase = authoritativePass;
+      }
+    } catch (err) {}
+  }
+
+  if (!clientPass || clientPass !== authoritativePass) {
     return res.status(401).json({ error: 'Akses ditolak. Passphrase panitia salah atau belum dimasukkan.' });
   }
   next();
@@ -515,21 +526,59 @@ if (!process.env.VERCEL) {
 // REST APIS
 // ========================
 
-// 1. Auth Endpoint
-app.post('/api/auth/login', (req, res) => {
-  const { passphrase } = req.body;
-  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
-  if (passphrase === activePass) {
+// 1. Auth Endpoint (Direct Supabase Validation - Single Source of Truth)
+const handleLogin = async (req, res) => {
+  const inputPass = String(req.body?.passphrase || '').trim();
+  if (!inputPass) {
+    return res.status(400).json({ error: 'Passphrase tidak boleh kosong.' });
+  }
+
+  // 1. Selalu prioritaskan pembacaan passphrase terbaru langsung dari database Supabase
+  let authoritativePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('passphrase')
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data && data.passphrase) {
+        authoritativePass = String(data.passphrase).trim();
+        state.passphrase = authoritativePass;
+      }
+    } catch (err) {
+      console.error('⚡ Error checking passphrase directly from Supabase:', err.message);
+    }
+  }
+
+  if (inputPass === authoritativePass) {
+    state.passphrase = authoritativePass;
     res.json({ success: true, message: 'Autentikasi berhasil.' });
   } else {
     res.status(401).json({ error: 'Passphrase salah!' });
   }
-});
+};
+
+app.post('/api/auth/login', handleLogin);
+app.post('/auth/login', handleLogin);
 
 // 1b. Change Password Endpoint
-app.post('/api/auth/change-password', async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  const activePass = state.passphrase || DEFAULT_PASSPHRASE;
+const handleChangePassword = async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '').trim();
+  const newPassword = String(req.body?.newPassword || '').trim();
+
+  // Validasi dari database Supabase
+  let activePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
+  if (supabase) {
+    try {
+      const { data } = await supabase.from('settings').select('passphrase').limit(1).maybeSingle();
+      if (data && data.passphrase) {
+        activePass = String(data.passphrase).trim();
+        state.passphrase = activePass;
+      }
+    } catch (e) {}
+  }
 
   if (!currentPassword) {
     return res.status(400).json({ error: 'Password saat ini harus diisi.' });
@@ -539,24 +588,27 @@ app.post('/api/auth/change-password', async (req, res) => {
     return res.status(401).json({ error: 'Password saat ini salah!' });
   }
 
-  if (!newPassword || newPassword.trim() === '') {
+  if (!newPassword || newPassword === '') {
     return res.status(400).json({ error: 'Password baru tidak boleh kosong.' });
   }
 
-  if (newPassword.trim().length < 4) {
+  if (newPassword.length < 4) {
     return res.status(400).json({ error: 'Password baru minimal 4 karakter.' });
   }
 
-  if (newPassword.trim() === currentPassword) {
+  if (newPassword === currentPassword) {
     return res.status(400).json({ error: 'Password baru harus berbeda dari password sekarang.' });
   }
 
-  state.passphrase = newPassword.trim();
+  state.passphrase = newPassword;
   await syncSettingsUpdate();
   await saveData(state);
 
   res.json({ success: true, message: 'Password admin berhasil diperbarui!' });
-});
+};
+
+app.post('/api/auth/change-password', handleChangePassword);
+app.post('/auth/change-password', handleChangePassword);
 
 // 2. Get current state (public)
 app.get('/api/data', (req, res) => {

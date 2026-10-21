@@ -138,11 +138,14 @@ async function handleLoginSubmit(e) {
       authErrorMsg.classList.add('hidden');
       showToast('Akses panel panitia terbuka!');
     } else {
+      const errData = await res.json().catch(() => ({}));
+      authErrorMsg.textContent = errData.error || 'Passphrase salah!';
       authErrorMsg.classList.remove('hidden');
       inputPassphrase.select();
     }
   } catch (err) {
-    alert('Terjadi kesalahan jaringan server.');
+    authErrorMsg.textContent = 'Gagal menghubungi server (' + (err.message || 'Error jaringan') + ')';
+    authErrorMsg.classList.remove('hidden');
   }
 }
 
@@ -1127,7 +1130,5 @@ if (socket) {
       sounds.playBuzzer();
       showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
     }
-  });
-}
   });
 }
