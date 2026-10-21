@@ -1,6 +1,18 @@
 // admin.js - Panitia Control Panel with Passphrase Auth, Dual Boards, Timer & Quick Finish
 
-// Safe Socket.io initialization (works both with standalone server & serverless)
+// Supabase Realtime Client for Direct WebSocket PubSub
+const SUPABASE_URL = "https://ipfbayuzfblfyvyoabcf.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_V4xnTcGwbgW_y55WfoVGMA_G_3uRVLk";
+let supabaseClient = null;
+if (typeof supabase !== 'undefined' && SUPABASE_URL && SUPABASE_ANON_KEY) {
+  try {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch (e) {
+    console.warn('Supabase Realtime notice:', e);
+  }
+}
+
+// Safe Socket.io initialization (works both with standalone server & fallback)
 let socket = null;
 if (typeof io !== 'undefined') {
   try {
@@ -365,9 +377,25 @@ function handleSearch(val) {
 }
 
 // ========================
-// TIMER CONTROLS
+// TIMER CONTROLS (WITH DEBOUNCE & CONCURRENCY PROTECTION)
 // ========================
+let isTimerBusy = false;
 async function controlTimer(action) {
+  if (isTimerBusy) return;
+  isTimerBusy = true;
+
+  const timerBtns = [
+    document.getElementById('btnStartTimer'),
+    document.getElementById('btnPauseTimer'),
+    document.getElementById('btnResetTimer')
+  ];
+  timerBtns.forEach(btn => {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'pointer-events-none');
+    }
+  });
+
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
   localMatchTeams[activeBoardId].teamA = teamA;
@@ -385,6 +413,16 @@ async function controlTimer(action) {
     }
   } catch (e) {
     showToast('Terjadi kesalahan jaringan', 'error');
+  } finally {
+    setTimeout(() => {
+      isTimerBusy = false;
+      timerBtns.forEach(btn => {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-50', 'pointer-events-none');
+        }
+      });
+    }, 250);
   }
 }
 
@@ -424,9 +462,18 @@ async function handleSaveTimerSetup(e) {
 }
 
 // ========================
-// MATCH ARENA & QUICK FINISH
+// MATCH ARENA & QUICK FINISH (WITH DEBOUNCE PROTECTION)
 // ========================
+let isMatchSaveBusy = false;
 async function saveMatchSetup(notify = true) {
+  if (isMatchSaveBusy) return;
+  isMatchSaveBusy = true;
+  const btn = document.getElementById('btnSaveMatch');
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'pointer-events-none');
+  }
+
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
   localMatchTeams[activeBoardId].teamA = teamA;
@@ -444,10 +491,21 @@ async function saveMatchSetup(notify = true) {
     }
   } catch (e) {
     if (notify) showToast('Gagal menyimpan nama kelompok', 'error');
+  } finally {
+    setTimeout(() => {
+      isMatchSaveBusy = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'pointer-events-none');
+      }
+    }, 250);
   }
 }
 
+let isFinishBusy = { 'A': false, 'B': false };
 async function recordTimeFromTimer(teamType) {
+  if (isFinishBusy[teamType]) return;
+
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
   const teamName = teamType === 'A' ? teamA : teamB;
@@ -457,6 +515,13 @@ async function recordTimeFromTimer(teamType) {
     if (teamType === 'A') matchInputTeamA.focus();
     else matchInputTeamB.focus();
     return;
+  }
+
+  isFinishBusy[teamType] = true;
+  const btn = teamType === 'A' ? document.getElementById('btnFinishA') : document.getElementById('btnFinishB');
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'pointer-events-none');
   }
 
   // Ensure local cache preserves the values
@@ -488,6 +553,14 @@ async function recordTimeFromTimer(teamType) {
     }
   } catch (e) {
     showToast('Gagal mencatat waktu dari timer', 'error');
+  } finally {
+    setTimeout(() => {
+      isFinishBusy[teamType] = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'pointer-events-none');
+      }
+    }, 350);
   }
 }
 
@@ -930,7 +1003,7 @@ async function handleManualBlobSync() {
   }
 }
 
-// Initial API Fetch & Periodic Polling (Guarantees sync on Vercel Serverless)
+// Initial API Fetch & Periodic Polling (Fallback sync)
 async function fetchAdminData() {
   try {
     const res = await fetch('/api/data', { cache: 'no-store' });
@@ -947,9 +1020,9 @@ async function fetchAdminData() {
   }
 }
 fetchAdminData();
-setInterval(fetchAdminData, 2000);
+setInterval(fetchAdminData, 4000);
 
-// Client-side smooth timer calculation (50ms loop)
+// Client-side smooth timer calculation (Timestamp-based Single Source of Truth, 33ms loop)
 setInterval(() => {
   if (!globalData || !globalData.boards) return;
   const board = globalData.boards[activeBoardId];
@@ -971,9 +1044,57 @@ setInterval(() => {
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
     }
   }
-}, 50);
+}, 33);
 
-// Socket Events (if Socket.io connection is active)
+// ----------------------------------------------------
+// SUPABASE REALTIME SUBSCRIPTION (Admin Panel PubSub)
+// ----------------------------------------------------
+if (supabaseClient) {
+  supabaseClient
+    .channel('admin_realtime_channel')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
+      const row = payload.new;
+      if (!row || !globalData || !globalData.boards) return;
+      const bId = String(row.id);
+      const b = globalData.boards[bId];
+      if (b) {
+        const wasRunning = b.timer.isRunning;
+        b.name = row.name || b.name;
+        b.subtitle = row.subtitle || b.subtitle;
+        b.activeMatch = {
+          teamA: row.active_team_a || '',
+          teamB: row.active_team_b || ''
+        };
+        b.timer.title = row.timer_title || b.timer.title;
+        b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
+        b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
+        b.timer.isRunning = !!row.timer_is_running;
+        b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
+        b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
+
+        if (!wasRunning && b.timer.isRunning) {
+          if (typeof sounds !== 'undefined') sounds.playWhistle();
+        }
+
+        renderAdminView();
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, async () => {
+      await fetchAdminData();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
+      const row = payload.new;
+      if (!row || !globalData) return;
+      if (row.event_name) globalData.settings.eventName = row.event_name;
+      if (row.sub_title) globalData.settings.subTitle = row.sub_title;
+      renderAdminView();
+    })
+    .subscribe((status) => {
+      console.log('⚡ Supabase Realtime (Admin):', status);
+    });
+}
+
+// Socket Events (Fallback for local standalone server)
 if (socket) {
   socket.on('initial_data', (data) => {
     globalData = data;
@@ -995,35 +1116,18 @@ if (socket) {
     updateBlobUI(payload);
   });
 
-  socket.on('timer_tick', (payload) => {
-    if (!globalData || !globalData.boards[payload.boardId]) return;
-    globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
-    globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
-
-    if (activeBoardId === payload.boardId) {
-      adminTimerDigits.textContent = formatMs(payload.remainingMs);
-      if (payload.remainingMs <= 0) {
-        adminTimerStatus.textContent = 'HABIS';
-        adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
-      } else if (payload.isRunning) {
-        adminTimerStatus.textContent = 'BERJALAN';
-        adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
-      }
-    }
-  });
-
-  // Suara timer ketika pertandingan dimulai
   socket.on('timer_started', (payload) => {
     if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
       sounds.playWhistle();
     }
   });
 
-  // Suara buzzer waktu habis (00:00)
   socket.on('timer_finished', (payload) => {
     if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
       sounds.playBuzzer();
       showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
     }
+  });
+}
   });
 }

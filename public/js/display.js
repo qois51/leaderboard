@@ -1,6 +1,18 @@
 // display.js - Handles real-time display, dual boards, & countdown timer
 
-// Safe Socket.io initialization (works both with standalone server & serverless)
+// Supabase Realtime Client for Direct WebSocket PubSub
+const SUPABASE_URL = "https://ipfbayuzfblfyvyoabcf.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_V4xnTcGwbgW_y55WfoVGMA_G_3uRVLk";
+let supabaseClient = null;
+if (typeof supabase !== 'undefined' && SUPABASE_URL && SUPABASE_ANON_KEY) {
+  try {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch (e) {
+    console.warn('Supabase Realtime notice:', e);
+  }
+}
+
+// Safe Socket.io initialization (works both with standalone server & fallback)
 let socket = null;
 if (typeof io !== 'undefined') {
   try {
@@ -357,7 +369,7 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// Initial API Fetch & Periodic Polling (Guarantees sync on Vercel Serverless)
+// Initial API Fetch & Periodic Polling (Fallback sync)
 async function fetchDataFromApi() {
   try {
     const res = await fetch('/api/data', { cache: 'no-store' });
@@ -371,9 +383,9 @@ async function fetchDataFromApi() {
   }
 }
 fetchDataFromApi();
-setInterval(fetchDataFromApi, 2000);
+setInterval(fetchDataFromApi, 4000);
 
-// Client-side smooth timer calculation (50ms loop)
+// Client-side smooth timer calculation (Timestamp-based Single Source of Truth, 33ms loop)
 setInterval(() => {
   if (!globalData || !globalData.boards) return;
   let hasRunning = false;
@@ -400,9 +412,61 @@ setInterval(() => {
       updateTimerDisplay(globalData.boards[activeBoardId]);
     }
   }
-}, 50);
+}, 33);
 
-// Socket Events (if Socket.io connection is active)
+// ----------------------------------------------------
+// SUPABASE REALTIME SUBSCRIPTION (Direct WebSocket PubSub)
+// ----------------------------------------------------
+if (supabaseClient) {
+  supabaseClient
+    .channel('display_realtime_channel')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
+      const row = payload.new;
+      if (!row || !globalData || !globalData.boards) return;
+      const bId = String(row.id);
+      const b = globalData.boards[bId];
+      if (b) {
+        const wasRunning = b.timer.isRunning;
+        b.name = row.name || b.name;
+        b.subtitle = row.subtitle || b.subtitle;
+        b.activeMatch = {
+          teamA: row.active_team_a || '',
+          teamB: row.active_team_b || ''
+        };
+        b.timer.title = row.timer_title || b.timer.title;
+        b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
+        b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
+        b.timer.isRunning = !!row.timer_is_running;
+        b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
+        b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
+
+        if (!wasRunning && b.timer.isRunning) {
+          sounds.playWhistle();
+        }
+
+        if (activeBoardId === bId) {
+          updateTimerDisplay(b);
+        } else if (activeBoardId === 'split') {
+          renderSplitView();
+        }
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, async () => {
+      await fetchDataFromApi();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
+      const row = payload.new;
+      if (!row || !globalData) return;
+      if (row.event_name) globalData.settings.eventName = row.event_name;
+      if (row.sub_title) globalData.settings.subTitle = row.sub_title;
+      renderView();
+    })
+    .subscribe((status) => {
+      console.log('⚡ Supabase Realtime (Display):', status);
+    });
+}
+
+// Socket Events (Fallback for local standalone Node server)
 if (socket) {
   socket.on('connect', () => {
     console.log('Connected to Leaderboard Server via Socket.IO');
@@ -416,18 +480,6 @@ if (socket) {
   socket.on('leaderboard_updated', (data) => {
     globalData = data;
     renderView();
-  });
-
-  socket.on('timer_tick', (payload) => {
-    if (!globalData || !globalData.boards[payload.boardId]) return;
-    globalData.boards[payload.boardId].timer.remainingMs = payload.remainingMs;
-    globalData.boards[payload.boardId].timer.isRunning = payload.isRunning;
-
-    if (activeBoardId === payload.boardId) {
-      updateTimerDisplay(globalData.boards[payload.boardId]);
-    } else if (activeBoardId === 'split') {
-      renderSplitView();
-    }
   });
 
   socket.on('timer_started', (payload) => {

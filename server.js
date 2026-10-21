@@ -483,39 +483,32 @@ function getFullDataResponse() {
   };
 }
 
-// Timer Loop: update running timers on server (only for persistent instances)
+// Timer Expiration Check Loop (Only emits when time expires, no continuous tick spam)
 if (!process.env.VERCEL) {
-  setInterval(() => {
+  setInterval(async () => {
     let changed = false;
-    ['1', '2'].forEach(bId => {
+    for (const bId of ['1', '2']) {
       const board = state.boards[bId];
-      if (board && board.timer && board.timer.isRunning) {
+      if (board && board.timer && board.timer.isRunning && board.timer.targetEndTime) {
         const now = Date.now();
-        const remaining = Math.max(0, board.timer.targetEndTime - now);
-        board.timer.remainingMs = remaining;
-
-        if (remaining <= 0) {
+        if (now >= board.timer.targetEndTime) {
           board.timer.isRunning = false;
           board.timer.remainingMs = 0;
           board.timer.startedAt = null;
           board.timer.targetEndTime = null;
           changed = true;
-          io.emit('timer_finished', { boardId: bId });
+          await syncBoardUpdate(bId);
+          if (io) io.emit('timer_finished', { boardId: bId });
         }
-        
-        // Emit tick
-        io.emit('timer_tick', {
-          boardId: bId,
-          remainingMs: board.timer.remainingMs,
-          isRunning: board.timer.isRunning
-        });
       }
-    });
+    }
 
     if (changed) {
+      const fullData = getFullDataResponse();
+      if (io) io.emit('leaderboard_updated', fullData);
       saveData(state);
     }
-  }, 200);
+  }, 500);
 }
 
 // ========================
@@ -709,6 +702,7 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
       timer.targetEndTime = null;
     }
   } else if (action === 'start') {
+    // Idempotent: If already running, do not re-calculate startedAt/targetEndTime
     if (!timer.isRunning) {
       if (timer.remainingMs <= 0) {
         timer.remainingMs = timer.durationSeconds * 1000;
@@ -719,13 +713,15 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
       if (io) io.emit('timer_started', { boardId });
     }
   } else if (action === 'pause') {
+    // Idempotent: If already paused, do nothing
     if (timer.isRunning) {
-      timer.remainingMs = Math.max(0, timer.targetEndTime - Date.now());
+      timer.remainingMs = Math.max(0, (timer.targetEndTime || Date.now()) - Date.now());
       timer.isRunning = false;
       timer.startedAt = null;
       timer.targetEndTime = null;
     }
   } else if (action === 'reset') {
+    // Idempotent: Reset to full duration
     timer.isRunning = false;
     timer.remainingMs = timer.durationSeconds * 1000;
     timer.startedAt = null;
@@ -776,9 +772,15 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
   if (teamType === 'A') board.activeMatch.teamA = finalName;
   if (teamType === 'B') board.activeMatch.teamB = finalName;
 
-  // Calculate elapsed time (waktu yang dihabiskan)
+  // Calculate elapsed time (Timestamp-based Single Source of Truth)
   const totalDurationMs = board.timer.durationSeconds * 1000;
-  let elapsedMs = totalDurationMs - board.timer.remainingMs;
+  let elapsedMs;
+  if (board.timer.isRunning && board.timer.targetEndTime) {
+    const remaining = Math.max(0, board.timer.targetEndTime - Date.now());
+    elapsedMs = totalDurationMs - remaining;
+  } else {
+    elapsedMs = totalDurationMs - (board.timer.remainingMs !== undefined ? board.timer.remainingMs : totalDurationMs);
+  }
   if (elapsedMs <= 0) elapsedMs = 500; // minimum fallback
 
   const minutes = Math.floor(elapsedMs / 60000);
