@@ -122,13 +122,14 @@ Aplikasi ini sudah dipersiapkan sepenuhnya untuk langsung di-hosting di **Vercel
 
 ### 2. Langkah Deploy ke Vercel via Dashboard / GitHub
 1. Push project ini ke repository GitHub Anda (`git push origin main`).
-2. Buka [Vercel Dashboard](https://vercel.com/dashboard) dan klik **"Add New"** > **"Project"**.
-3. Pilih repository GitHub ini.
-4. Pada bagian **Environment Variables**, tambahkan:
-   - **Key**: `BLOB_READ_WRITE_TOKEN`
-   - **Value**: Masukkan token Vercel Blob Storage Anda.
-5. Klik **Deploy**.
-6. Aplikasi langsung aktif dan dapat diakses publik melalui URL `https://your-project.vercel.app`!
+2. Buka [Vercel Dashboard](https://vercel.com/dashboard) dan klik **"Add New"** > **"Project"** (atau buka project yang sudah ada).
+3. Pada bagian **Settings** > **Environment Variables**, tambahkan:
+   - `SUPABASE_URL`: `https://ipfbayuzfblfyvyoabcf.supabase.co`
+   - `SUPABASE_PUBLISHABLE_KEY`: `sb_publishable_V4xnTcGwbgW_y55WfoVGMA_G_3uRVLk`
+   - `SUPABASE_SECRET_KEY`: Masukkan Secret Key Supabase Anda
+   - *(Opsional)* `BLOB_READ_WRITE_TOKEN`: Token Vercel Blob jika masih ingin backup ke Blob
+4. Klik **Deploy** / **Redeploy**.
+5. Aplikasi langsung aktif dan tersambung langsung ke database Supabase!
 
 ### 3. Deploy via Vercel CLI
 ```bash

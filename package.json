@@ -11,6 +11,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@supabase/server": "^1.9.2",
+    "@supabase/supabase-js": "^2.118.0",
     "@vercel/blob": "^2.8.2",
     "cors": "^2.8.6",
     "dotenv": "^18.0.8",
