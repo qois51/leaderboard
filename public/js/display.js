@@ -163,19 +163,25 @@ function updateTimerDisplay(board) {
   if (!board || !board.timer) return;
   const timer = board.timer;
 
+  const totalDurationMs = (timer.durationSeconds || 180) * 1000;
+  let liveRemaining = timer.remainingMs;
+  if (timer.isRunning && timer.targetEndTime) {
+    liveRemaining = Math.max(0, timer.targetEndTime - Date.now());
+    timer.remainingMs = liveRemaining;
+  }
+
   timerTitle.textContent = timer.title || 'WAKTU PERTANDINGAN';
-  countdownDigits.textContent = formatMs(timer.remainingMs);
+  countdownDigits.textContent = formatMs(liveRemaining);
 
   // Status Badge & Classes
   countdownDigits.classList.remove('timer-warning', 'timer-danger');
   timerProgressBar.classList.remove('bg-amber-500', 'bg-rose-500');
   timerProgressBar.classList.add('bg-blue-500');
 
-  const totalDurationMs = (timer.durationSeconds || 180) * 1000;
-  const percent = Math.min(100, Math.max(0, (timer.remainingMs / totalDurationMs) * 100));
+  const percent = Math.min(100, Math.max(0, (liveRemaining / totalDurationMs) * 100));
   timerProgressBar.style.width = `${percent}%`;
 
-  if (timer.remainingMs <= 0) {
+  if (liveRemaining <= 0) {
     timerStatusBadge.textContent = 'WAKTU HABIS!';
     timerStatusBadge.className = 'px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-rose-600 text-white uppercase animate-pulse';
     countdownDigits.classList.add('timer-danger');
@@ -184,22 +190,25 @@ function updateTimerDisplay(board) {
     timerStatusBadge.textContent = 'BERJALAN';
     timerStatusBadge.className = 'px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-emerald-600 text-white uppercase';
 
-    if (timer.remainingMs <= 10000) {
+    if (liveRemaining <= 10000) {
       countdownDigits.classList.add('timer-danger');
       timerProgressBar.classList.add('bg-rose-500');
       // Audio beep for final 5 seconds
-      const secInt = Math.ceil(timer.remainingMs / 1000);
+      const secInt = Math.ceil(liveRemaining / 1000);
       if (secInt <= 5 && secInt > 0 && lastPlayedBeepSecond !== secInt) {
         lastPlayedBeepSecond = secInt;
         sounds.playCountdownBeep(secInt === 1);
       }
-    } else if (timer.remainingMs <= 30000) {
+    } else if (liveRemaining <= 30000) {
       countdownDigits.classList.add('timer-warning');
       timerProgressBar.classList.add('bg-amber-500');
     }
+  } else if (liveRemaining < totalDurationMs) {
+    timerStatusBadge.textContent = 'DIJEDA';
+    timerStatusBadge.className = 'px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-amber-500 text-gray-950 uppercase font-black';
   } else {
-    timerStatusBadge.textContent = 'DIJEDA / SIAP';
-    timerStatusBadge.className = 'px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-gray-800 text-gray-400 border border-gray-700 uppercase';
+    timerStatusBadge.textContent = 'SIAP';
+    timerStatusBadge.className = 'px-3 py-1 rounded-full text-xs font-bold tracking-wider bg-blue-600 text-white uppercase font-bold';
   }
 
   // Active Matchup
@@ -305,8 +314,19 @@ function renderSplitView() {
   split1Name.textContent = b1.name;
   split2Name.textContent = b2.name;
 
-  split1TimerDigits.textContent = formatMs(b1.timer ? b1.timer.remainingMs : 0);
-  split2TimerDigits.textContent = formatMs(b2.timer ? b2.timer.remainingMs : 0);
+  let b1Rem = b1.timer ? b1.timer.remainingMs : 0;
+  if (b1.timer && b1.timer.isRunning && b1.timer.targetEndTime) {
+    b1Rem = Math.max(0, b1.timer.targetEndTime - Date.now());
+    b1.timer.remainingMs = b1Rem;
+  }
+  let b2Rem = b2.timer ? b2.timer.remainingMs : 0;
+  if (b2.timer && b2.timer.isRunning && b2.timer.targetEndTime) {
+    b2Rem = Math.max(0, b2.timer.targetEndTime - Date.now());
+    b2.timer.remainingMs = b2Rem;
+  }
+
+  split1TimerDigits.textContent = formatMs(b1Rem);
+  split2TimerDigits.textContent = formatMs(b2Rem);
 
   const renderMiniTable = (teams) => {
     if (!teams || teams.length === 0) {
@@ -435,10 +455,15 @@ if (supabaseClient) {
         };
         b.timer.title = row.timer_title || b.timer.title;
         b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
-        b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
         b.timer.isRunning = !!row.timer_is_running;
         b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
         b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
+
+        if (b.timer.isRunning && b.timer.targetEndTime) {
+          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - Date.now());
+        } else {
+          b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
+        }
 
         if (!wasRunning && b.timer.isRunning) {
           sounds.playWhistle();

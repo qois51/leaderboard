@@ -122,13 +122,22 @@ async function loadDataFromSupabase(force = false) {
           teamA: b.active_team_a || '',
           teamB: b.active_team_b || ''
         };
+        const isRunning = !!b.timer_is_running;
+        const targetEndTime = b.timer_target_end_time ? Number(b.timer_target_end_time) : null;
+        const durationSeconds = b.timer_duration_seconds !== null ? b.timer_duration_seconds : 180;
+        
+        let remainingMs = b.timer_remaining_ms !== null ? Number(b.timer_remaining_ms) : (durationSeconds * 1000);
+        if (isRunning && targetEndTime) {
+          remainingMs = Math.max(0, targetEndTime - Date.now());
+        }
+
         state.boards[bId].timer = {
           title: b.timer_title || 'WAKTU PERTANDINGAN',
-          durationSeconds: b.timer_duration_seconds !== null ? b.timer_duration_seconds : 180,
-          remainingMs: b.timer_remaining_ms !== null ? b.timer_remaining_ms : 180000,
-          isRunning: !!b.timer_is_running,
+          durationSeconds: durationSeconds,
+          remainingMs: remainingMs,
+          isRunning: isRunning,
           startedAt: b.timer_started_at ? Number(b.timer_started_at) : null,
-          targetEndTime: b.timer_target_end_time ? Number(b.timer_target_end_time) : null
+          targetEndTime: targetEndTime
         };
       });
     }
@@ -469,18 +478,28 @@ app.get('/change-password', (req, res) => {
 
 // Helper to get full sanitized response
 function getFullDataResponse() {
+  const boardsResponse = {};
+  for (const bId of ['1', '2']) {
+    const b = state.boards[bId];
+    if (b) {
+      let liveRemainingMs = b.timer?.remainingMs !== undefined ? b.timer.remainingMs : 180000;
+      if (b.timer?.isRunning && b.timer?.targetEndTime) {
+        liveRemainingMs = Math.max(0, Number(b.timer.targetEndTime) - Date.now());
+      }
+      boardsResponse[bId] = {
+        ...b,
+        timer: {
+          ...b.timer,
+          remainingMs: liveRemainingMs
+        },
+        teams: getRankedTeams(b.teams)
+      };
+    }
+  }
+
   return {
     settings: state.settings,
-    boards: {
-      "1": {
-        ...state.boards["1"],
-        teams: getRankedTeams(state.boards["1"].teams)
-      },
-      "2": {
-        ...state.boards["2"],
-        teams: getRankedTeams(state.boards["2"].teams)
-      }
-    },
+    boards: boardsResponse,
     supabase: {
       enabled: !!supabase,
       url: SUPABASE_URL,
@@ -732,7 +751,7 @@ app.post('/api/teams/reset', requirePassphrase, async (req, res) => {
 
 // 7. Timer Controls (Protected)
 app.post('/api/timer/control', requirePassphrase, async (req, res) => {
-  const { boardId = '1', action, durationSeconds, title, teamA, teamB } = req.body;
+  const { boardId = '1', action, durationSeconds, title, teamA, teamB, clientRemainingMs } = req.body;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
@@ -742,6 +761,7 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
   if (teamB !== undefined) board.activeMatch.teamB = teamB.trim();
 
   const timer = board.timer;
+  const totalMs = (timer.durationSeconds || 180) * 1000;
 
   if (action === 'setup') {
     if (title) timer.title = title.trim();
@@ -754,10 +774,9 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
       timer.targetEndTime = null;
     }
   } else if (action === 'start') {
-    // Idempotent: If already running, do not re-calculate startedAt/targetEndTime
     if (!timer.isRunning) {
-      if (timer.remainingMs <= 0) {
-        timer.remainingMs = timer.durationSeconds * 1000;
+      if (timer.remainingMs <= 0 || timer.remainingMs > totalMs) {
+        timer.remainingMs = totalMs;
       }
       timer.isRunning = true;
       timer.startedAt = Date.now();
@@ -765,26 +784,31 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
       if (io) io.emit('timer_started', { boardId });
     }
   } else if (action === 'pause') {
-    // Idempotent: If already paused, do nothing
     if (timer.isRunning) {
-      timer.remainingMs = Math.max(0, (timer.targetEndTime || Date.now()) - Date.now());
+      let rem = timer.targetEndTime ? Math.max(0, timer.targetEndTime - Date.now()) : timer.remainingMs;
+      if (typeof clientRemainingMs === 'number' && clientRemainingMs >= 0 && Math.abs(clientRemainingMs - rem) < 2500) {
+        rem = clientRemainingMs;
+      }
+      timer.remainingMs = rem;
       timer.isRunning = false;
       timer.startedAt = null;
       timer.targetEndTime = null;
     }
   } else if (action === 'reset') {
-    // Idempotent: Reset to full duration
     timer.isRunning = false;
-    timer.remainingMs = timer.durationSeconds * 1000;
+    timer.remainingMs = totalMs;
     timer.startedAt = null;
     timer.targetEndTime = null;
   }
 
-  await syncBoardUpdate(boardId);
-  await saveData(state);
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
-  res.json({ success: true, timer, activeMatch: board.activeMatch });
+
+  // Send response immediately (<15ms) so UI feels instant
+  res.json({ success: true, timer: fullData.boards[String(boardId)].timer, activeMatch: board.activeMatch });
+
+  // Sync to database asynchronously in background
+  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate background:', err.message));
 });
 
 // 8. Setup Active Battle Teams (Protected)
@@ -798,11 +822,11 @@ app.post('/api/match/setup', requirePassphrase, async (req, res) => {
     teamB: (teamB || '').trim()
   };
 
-  await syncBoardUpdate(boardId);
-  await saveData(state);
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, activeMatch: board.activeMatch });
+
+  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate in match setup:', err.message));
 });
 
 // 9. Record Time directly from Timer for Active Team (Protected)
@@ -825,7 +849,7 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
   if (teamType === 'B') board.activeMatch.teamB = finalName;
 
   // Calculate elapsed time (Timestamp-based Single Source of Truth)
-  const totalDurationMs = board.timer.durationSeconds * 1000;
+  const totalDurationMs = (board.timer.durationSeconds || 180) * 1000;
   let elapsedMs;
   if (board.timer.isRunning && board.timer.targetEndTime) {
     const remaining = Math.max(0, board.timer.targetEndTime - Date.now());
@@ -863,9 +887,7 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
     board.teams.push(savedTeam);
   }
 
-  await syncTeamUpsert(savedTeam, boardId);
-  await syncBoardUpdate(boardId);
-  await saveData(state);
+  // Fast response
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
@@ -876,6 +898,10 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
     elapsedMs,
     formattedTime: formatTime(elapsedMs)
   });
+
+  // Sync team and board to DB in background
+  syncTeamUpsert(savedTeam, boardId).catch(err => console.error('⚡ Error syncTeamUpsert:', err.message));
+  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate in record-time:', err.message));
 });
 
 // 10. Update board settings / titles (Protected)

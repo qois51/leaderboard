@@ -284,17 +284,28 @@ function renderAdminView() {
   // Render Timer
   if (currentBoard.timer) {
     adminTimerTitle.textContent = currentBoard.timer.title || 'Waktu Pertandingan';
-    adminTimerDigits.textContent = formatMs(currentBoard.timer.remainingMs);
 
-    if (currentBoard.timer.remainingMs <= 0) {
+    const totalDurationMs = (currentBoard.timer.durationSeconds || 180) * 1000;
+    let liveRemainingMs = currentBoard.timer.remainingMs;
+    if (currentBoard.timer.isRunning && currentBoard.timer.targetEndTime) {
+      liveRemainingMs = Math.max(0, currentBoard.timer.targetEndTime - Date.now());
+      currentBoard.timer.remainingMs = liveRemainingMs;
+    }
+
+    adminTimerDigits.textContent = formatMs(liveRemainingMs);
+
+    if (liveRemainingMs <= 0) {
       adminTimerStatus.textContent = 'HABIS';
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
     } else if (currentBoard.timer.isRunning) {
       adminTimerStatus.textContent = 'BERJALAN';
-      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
+      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold animate-pulse';
+    } else if (liveRemainingMs < totalDurationMs) {
+      adminTimerStatus.textContent = 'DIJEDA';
+      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-amber-500 text-gray-950 font-black';
     } else {
-      adminTimerStatus.textContent = 'DIJEDA / SIAP';
-      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-400 font-bold';
+      adminTimerStatus.textContent = 'SIAP';
+      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-blue-600 text-white font-bold';
     }
   }
 
@@ -380,52 +391,65 @@ function handleSearch(val) {
 }
 
 // ========================
-// TIMER CONTROLS (WITH DEBOUNCE & CONCURRENCY PROTECTION)
+// TIMER CONTROLS (OPTIMISTIC INSTANT FEEDBACK)
 // ========================
-let isTimerBusy = false;
 async function controlTimer(action) {
-  if (isTimerBusy) return;
-  isTimerBusy = true;
-
-  const timerBtns = [
-    document.getElementById('btnStartTimer'),
-    document.getElementById('btnPauseTimer'),
-    document.getElementById('btnResetTimer')
-  ];
-  timerBtns.forEach(btn => {
-    if (btn) {
-      btn.disabled = true;
-      btn.classList.add('opacity-50', 'pointer-events-none');
-    }
-  });
-
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
   localMatchTeams[activeBoardId].teamA = teamA;
   localMatchTeams[activeBoardId].teamB = teamB;
 
+  const board = (globalData && globalData.boards) ? globalData.boards[activeBoardId] : null;
+  let clientRemainingMs = undefined;
+
+  // Optimistic local state update (0ms immediate reaction)
+  if (board && board.timer) {
+    const totalMs = (board.timer.durationSeconds || 180) * 1000;
+    if (action === 'start') {
+      if (!board.timer.isRunning) {
+        if (board.timer.remainingMs <= 0 || board.timer.remainingMs > totalMs) {
+          board.timer.remainingMs = totalMs;
+        }
+        board.timer.isRunning = true;
+        board.timer.startedAt = Date.now();
+        board.timer.targetEndTime = Date.now() + board.timer.remainingMs;
+      }
+    } else if (action === 'pause') {
+      if (board.timer.isRunning) {
+        const curRem = board.timer.targetEndTime ? Math.max(0, board.timer.targetEndTime - Date.now()) : board.timer.remainingMs;
+        board.timer.remainingMs = curRem;
+        clientRemainingMs = curRem;
+        board.timer.isRunning = false;
+        board.timer.startedAt = null;
+        board.timer.targetEndTime = null;
+      }
+    } else if (action === 'reset') {
+      board.timer.isRunning = false;
+      board.timer.remainingMs = totalMs;
+      board.timer.startedAt = null;
+      board.timer.targetEndTime = null;
+    }
+    renderAdminView();
+  }
+
   try {
     const res = await fetch('/api/timer/control', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ boardId: activeBoardId, action, teamA, teamB })
+      body: JSON.stringify({ boardId: activeBoardId, action, teamA, teamB, clientRemainingMs })
     });
-    if (!res.ok) {
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.timer && board) {
+        board.timer = data.timer;
+        renderAdminView();
+      }
+    } else {
       const err = await res.json();
       showToast(err.error || 'Gagal mengatur timer', 'error');
     }
   } catch (e) {
     showToast('Terjadi kesalahan jaringan', 'error');
-  } finally {
-    setTimeout(() => {
-      isTimerBusy = false;
-      timerBtns.forEach(btn => {
-        if (btn) {
-          btn.disabled = false;
-          btn.classList.remove('opacity-50', 'pointer-events-none');
-        }
-      });
-    }, 250);
   }
 }
 
@@ -894,49 +918,6 @@ async function executeImport() {
   }
 }
 
-// Sound toggle for Admin
-function toggleSound() {
-  if (typeof sounds === 'undefined') return;
-  sounds.enabled = !sounds.enabled;
-  localStorage.setItem('leaderboard_sound', sounds.enabled ? '1' : '0');
-
-  const iconOn = document.getElementById('soundIconOn');
-  const iconOff = document.getElementById('soundIconOff');
-  if (iconOn) iconOn.classList.toggle('hidden', !sounds.enabled);
-  if (iconOff) iconOff.classList.toggle('hidden', sounds.enabled);
-
-  if (sounds.enabled) {
-    sounds.playUpdate();
-    showToast('🔊 Suara aktif! Buzzer akan berbunyi saat timer habis.');
-  } else {
-    showToast('🔇 Suara dinonaktifkan.');
-  }
-}
-
-// Tombol tes bunyi buzzer langsung
-function testBuzzerSound() {
-  if (typeof sounds === 'undefined') return;
-  sounds.enabled = true;
-  localStorage.setItem('leaderboard_sound', '1');
-  const iconOn = document.getElementById('soundIconOn');
-  const iconOff = document.getElementById('soundIconOff');
-  if (iconOn) iconOn.classList.remove('hidden');
-  if (iconOff) iconOff.classList.add('hidden');
-
-  sounds.playBuzzer();
-  showToast('📢 Tes suara buzzer waktu habis dibunyikan!');
-}
-
-// Inisialisasi status ikon suara awal (Default ON)
-if (typeof sounds !== 'undefined') {
-  const iconOn = document.getElementById('soundIconOn');
-  const iconOff = document.getElementById('soundIconOff');
-  if (iconOn && iconOff) {
-    iconOn.classList.toggle('hidden', !sounds.enabled);
-    iconOff.classList.toggle('hidden', sounds.enabled);
-  }
-}
-
 // Escape HTML
 function escapeHtml(str) {
   if (!str) return '';
@@ -1040,11 +1021,10 @@ setInterval(() => {
       board.timer.targetEndTime = null;
       adminTimerStatus.textContent = 'HABIS';
       adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
-      if (typeof sounds !== 'undefined') sounds.playBuzzer();
-      showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
+      showToast('⏰ WAKTU HABIS!', 'error');
     } else {
       adminTimerStatus.textContent = 'BERJALAN';
-      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold';
+      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold animate-pulse';
     }
   }
 }, 33);
@@ -1061,7 +1041,6 @@ if (supabaseClient) {
       const bId = String(row.id);
       const b = globalData.boards[bId];
       if (b) {
-        const wasRunning = b.timer.isRunning;
         b.name = row.name || b.name;
         b.subtitle = row.subtitle || b.subtitle;
         b.activeMatch = {
@@ -1070,13 +1049,14 @@ if (supabaseClient) {
         };
         b.timer.title = row.timer_title || b.timer.title;
         b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
-        b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
         b.timer.isRunning = !!row.timer_is_running;
         b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
         b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
 
-        if (!wasRunning && b.timer.isRunning) {
-          if (typeof sounds !== 'undefined') sounds.playWhistle();
+        if (b.timer.isRunning && b.timer.targetEndTime) {
+          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - Date.now());
+        } else {
+          b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
         }
 
         renderAdminView();
@@ -1119,16 +1099,13 @@ if (socket) {
     updateBlobUI(payload);
   });
 
-  socket.on('timer_started', (payload) => {
-    if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
-      sounds.playWhistle();
-    }
+  socket.on('timer_started', () => {
+    // Admin is silent
   });
 
   socket.on('timer_finished', (payload) => {
-    if (typeof sounds !== 'undefined' && (activeBoardId === payload.boardId || payload.boardId === 'all')) {
-      sounds.playBuzzer();
-      showToast('⏰ WAKTU HABIS! (Buzzer Berbunyi)', 'error');
+    if (activeBoardId === payload.boardId || payload.boardId === 'all') {
+      showToast('⏰ WAKTU HABIS!', 'error');
     }
   });
 }
