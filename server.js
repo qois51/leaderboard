@@ -1,6 +1,5 @@
 require('dotenv').config({ path: '.env.local' });
 require('dotenv').config();
-const { put, list } = require('@vercel/blob');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 const http = require('http');
@@ -16,9 +15,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_PASSPHRASE = 'qoisganteng123';
-const BLOB_FILENAME = 'data/leaderboard.json';
 
-// Supabase Configuration
+// Supabase Configuration (Single Source of Truth)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.includes('••'))
   ? process.env.SUPABASE_SECRET_KEY
@@ -31,12 +29,12 @@ const supabase = (SUPABASE_URL && SUPABASE_KEY)
   : null;
 
 let lastSupabaseSyncTime = null;
+let isInitialLoaded = false;
 
-// Cloud Vercel Blob State
-let latestBlobUrl = null;
-let lastBlobSyncTime = null;
-let isBlobSyncing = false;
-let pendingBlobSync = false;
+// Concurrency & Race-Condition Guards
+let activeWriteCount = 0;
+let lastAnyWriteAt = 0;
+const lastBoardTimerWriteAt = { '1': 0, '2': 0 };
 
 // Initial state template for a board
 function createDefaultBoard(id, name, subtitle) {
@@ -84,17 +82,23 @@ let state = {
 };
 
 // ----------------------------------------------------
-// SUPABASE STORAGE HANDLERS
+// SUPABASE ATOMIC STORAGE HANDLERS
 // ----------------------------------------------------
 
 let lastSupabaseFetchTime = 0;
 async function loadDataFromSupabase(force = false) {
   if (!supabase) return false;
-  const now = Date.now();
-  if (!force && now - lastSupabaseFetchTime < 1000) {
+
+  // Never let a background read overwrite an active or just-completed write
+  if (!force && (activeWriteCount > 0 || Date.now() - lastAnyWriteAt < 1200)) {
     return true;
   }
-  lastSupabaseFetchTime = now;
+
+  const fetchStartTime = Date.now();
+  if (!force && isInitialLoaded && fetchStartTime - lastSupabaseFetchTime < 600) {
+    return true;
+  }
+  lastSupabaseFetchTime = fetchStartTime;
 
   try {
     const [settingsRes, boardsRes, teamsRes] = await Promise.all([
@@ -103,6 +107,11 @@ async function loadDataFromSupabase(force = false) {
       supabase.from('teams').select('*').order('created_at', { ascending: true })
     ]);
 
+    // Abort applying stale read if a write occurred while the SELECT was in flight
+    if (!force && (activeWriteCount > 0 || lastAnyWriteAt >= fetchStartTime)) {
+      return true;
+    }
+
     if (settingsRes.data) {
       state.passphrase = settingsRes.data.passphrase || DEFAULT_PASSPHRASE;
       state.settings.eventName = settingsRes.data.event_name || state.settings.eventName;
@@ -110,6 +119,7 @@ async function loadDataFromSupabase(force = false) {
     }
 
     if (boardsRes.data && boardsRes.data.length > 0) {
+      const now = Date.now();
       boardsRes.data.forEach(b => {
         const bId = String(b.id);
         if (!state.boards[bId]) {
@@ -118,27 +128,39 @@ async function loadDataFromSupabase(force = false) {
         state.boards[bId].id = bId;
         state.boards[bId].name = b.name || state.boards[bId].name;
         state.boards[bId].subtitle = b.subtitle || state.boards[bId].subtitle;
-        state.boards[bId].activeMatch = {
-          teamA: b.active_team_a || '',
-          teamB: b.active_team_b || ''
-        };
-        const isRunning = !!b.timer_is_running;
-        const targetEndTime = b.timer_target_end_time ? Number(b.timer_target_end_time) : null;
-        const durationSeconds = b.timer_duration_seconds !== null ? b.timer_duration_seconds : 180;
-        
-        let remainingMs = b.timer_remaining_ms !== null ? Number(b.timer_remaining_ms) : (durationSeconds * 1000);
-        if (isRunning && targetEndTime) {
-          remainingMs = Math.max(0, targetEndTime - Date.now());
-        }
 
-        state.boards[bId].timer = {
-          title: b.timer_title || 'WAKTU PERTANDINGAN',
-          durationSeconds: durationSeconds,
-          remainingMs: remainingMs,
-          isRunning: isRunning,
-          startedAt: b.timer_started_at ? Number(b.timer_started_at) : null,
-          targetEndTime: targetEndTime
-        };
+        // Only update timer & activeMatch from DB if no newer timer write happened on this board
+        if (force || lastBoardTimerWriteAt[bId] < fetchStartTime - 1500) {
+          state.boards[bId].activeMatch = {
+            teamA: b.active_team_a || '',
+            teamB: b.active_team_b || ''
+          };
+
+          let isRunning = !!b.timer_is_running;
+          let startedAt = b.timer_started_at ? Number(b.timer_started_at) : null;
+          let targetEndTime = b.timer_target_end_time ? Number(b.timer_target_end_time) : null;
+          const durationSeconds = b.timer_duration_seconds !== null ? Number(b.timer_duration_seconds) : 180;
+
+          let remainingMs = b.timer_remaining_ms !== null ? Number(b.timer_remaining_ms) : (durationSeconds * 1000);
+          if (isRunning && targetEndTime) {
+            remainingMs = Math.max(0, targetEndTime - now);
+            if (remainingMs <= 0) {
+              isRunning = false;
+              remainingMs = 0;
+              startedAt = null;
+              targetEndTime = null;
+            }
+          }
+
+          state.boards[bId].timer = {
+            title: b.timer_title || 'WAKTU PERTANDINGAN',
+            durationSeconds,
+            remainingMs,
+            isRunning,
+            startedAt,
+            targetEndTime
+          };
+        }
       });
     }
 
@@ -163,6 +185,7 @@ async function loadDataFromSupabase(force = false) {
       });
     }
 
+    isInitialLoaded = true;
     lastSupabaseSyncTime = new Date().toISOString();
     return true;
   } catch (err) {
@@ -171,209 +194,182 @@ async function loadDataFromSupabase(force = false) {
   }
 }
 
+async function ensureInitialized() {
+  if (!isInitialLoaded && supabase) {
+    await loadDataFromSupabase(true);
+  }
+}
+
+// Targeted update: ONLY timer + activeMatch columns on boards
+async function syncBoardTimer(boardId) {
+  if (!supabase) return;
+  const b = state.boards[String(boardId)];
+  if (!b) return;
+  activeWriteCount++;
+  const now = Date.now();
+  lastAnyWriteAt = now;
+  lastBoardTimerWriteAt[String(boardId)] = now;
+  try {
+    const payload = {
+      active_team_a: b.activeMatch?.teamA || '',
+      active_team_b: b.activeMatch?.teamB || '',
+      timer_title: b.timer?.title || 'WAKTU PERTANDINGAN',
+      timer_duration_seconds: Math.round(b.timer?.durationSeconds || 180),
+      timer_remaining_ms: Math.max(0, Math.round(b.timer?.remainingMs !== undefined ? b.timer.remainingMs : 180000)),
+      timer_is_running: !!b.timer?.isRunning,
+      timer_started_at: b.timer?.startedAt ? Math.round(b.timer.startedAt) : null,
+      timer_target_end_time: b.timer?.targetEndTime ? Math.round(b.timer.targetEndTime) : null,
+      updated_at: new Date().toISOString()
+    };
+    const { error } = await supabase
+      .from('boards')
+      .update(payload)
+      .eq('id', String(boardId));
+
+    if (error) {
+      console.error('⚡ Supabase syncBoardTimer error:', error.message);
+    } else {
+      lastSupabaseSyncTime = new Date().toISOString();
+    }
+  } catch (err) {
+    console.error('⚡ Error syncing board timer to Supabase:', err.message);
+  } finally {
+    const fin = Date.now();
+    lastAnyWriteAt = fin;
+    lastBoardTimerWriteAt[String(boardId)] = fin;
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
+  }
+}
+
+// Targeted update: ONLY active_team_a and active_team_b (never touches timer_* columns!)
+async function syncBoardMatch(boardId) {
+  if (!supabase) return;
+  const b = state.boards[String(boardId)];
+  if (!b) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
+  try {
+    const { error } = await supabase
+      .from('boards')
+      .update({
+        active_team_a: b.activeMatch?.teamA || '',
+        active_team_b: b.activeMatch?.teamB || '',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', String(boardId));
+    if (error) console.error('⚡ Supabase syncBoardMatch error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
+  } catch (err) {
+    console.error('⚡ Error syncing board match to Supabase:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
+  }
+}
+
+// Targeted update: ONLY board name and subtitle (never touches timer_* columns!)
+async function syncBoardInfo(boardId) {
+  if (!supabase) return;
+  const b = state.boards[String(boardId)];
+  if (!b) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
+  try {
+    const { error } = await supabase
+      .from('boards')
+      .update({
+        name: b.name,
+        subtitle: b.subtitle,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', String(boardId));
+    if (error) console.error('⚡ Supabase syncBoardInfo error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
+  } catch (err) {
+    console.error('⚡ Error syncing board info to Supabase:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
+  }
+}
+
 async function syncTeamUpsert(team, boardId) {
   if (!supabase) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
   try {
-    await supabase.from('teams').upsert({
+    const { error } = await supabase.from('teams').upsert({
       id: String(team.id),
       board_id: String(boardId),
       name: team.name,
-      minutes: team.minutes,
-      seconds: team.seconds,
-      milliseconds: team.milliseconds,
-      total_ms: team.totalMs,
+      minutes: Math.round(team.minutes || 0),
+      seconds: Math.round(team.seconds || 0),
+      milliseconds: Math.round(team.milliseconds || 0),
+      total_ms: Math.round(team.totalMs || 0),
       created_at: team.createdAt || new Date().toISOString(),
       updated_at: new Date().toISOString()
     });
-    lastSupabaseSyncTime = new Date().toISOString();
+    if (error) console.error('⚡ Supabase syncTeamUpsert error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
   } catch (err) {
     console.error('⚡ Error syncing team upsert to Supabase:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
   }
 }
 
 async function syncTeamDelete(teamId) {
   if (!supabase) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
   try {
-    await supabase.from('teams').delete().eq('id', String(teamId));
-    lastSupabaseSyncTime = new Date().toISOString();
+    const { error } = await supabase.from('teams').delete().eq('id', String(teamId));
+    if (error) console.error('⚡ Supabase syncTeamDelete error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
   } catch (err) {
     console.error('⚡ Error syncing team delete to Supabase:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
   }
 }
 
 async function syncTeamsReset(boardId) {
   if (!supabase) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
   try {
-    await supabase.from('teams').delete().eq('board_id', String(boardId));
-    lastSupabaseSyncTime = new Date().toISOString();
+    const { error } = await supabase.from('teams').delete().eq('board_id', String(boardId));
+    if (error) console.error('⚡ Supabase syncTeamsReset error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
   } catch (err) {
     console.error('⚡ Error syncing teams reset to Supabase:', err.message);
-  }
-}
-
-async function syncBoardUpdate(boardId) {
-  if (!supabase) return;
-  const b = state.boards[String(boardId)];
-  if (!b) return;
-  try {
-    await supabase.from('boards').upsert({
-      id: String(boardId),
-      name: b.name,
-      subtitle: b.subtitle,
-      active_team_a: b.activeMatch?.teamA || '',
-      active_team_b: b.activeMatch?.teamB || '',
-      timer_title: b.timer?.title || 'WAKTU PERTANDINGAN',
-      timer_duration_seconds: b.timer?.durationSeconds || 180,
-      timer_remaining_ms: b.timer?.remainingMs !== undefined ? b.timer.remainingMs : 180000,
-      timer_is_running: !!b.timer?.isRunning,
-      timer_started_at: b.timer?.startedAt || null,
-      timer_target_end_time: b.timer?.targetEndTime || null,
-      updated_at: new Date().toISOString()
-    });
-    lastSupabaseSyncTime = new Date().toISOString();
-  } catch (err) {
-    console.error('⚡ Error syncing board to Supabase:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
   }
 }
 
 async function syncSettingsUpdate() {
   if (!supabase) return;
+  activeWriteCount++;
+  lastAnyWriteAt = Date.now();
   try {
-    await supabase.from('settings').upsert({
+    const { error } = await supabase.from('settings').upsert({
       id: 'default',
       event_name: state.settings.eventName,
       sub_title: state.settings.subTitle,
       passphrase: state.passphrase,
       updated_at: new Date().toISOString()
     });
-    lastSupabaseSyncTime = new Date().toISOString();
+    if (error) console.error('⚡ Supabase syncSettingsUpdate error:', error.message);
+    else lastSupabaseSyncTime = new Date().toISOString();
   } catch (err) {
     console.error('⚡ Error syncing settings to Supabase:', err.message);
-  }
-}
-
-async function saveAllToSupabase() {
-  if (!supabase) return;
-  try {
-    for (const bId of ['1', '2']) {
-      await syncBoardUpdate(bId);
-      const b = state.boards[bId];
-      if (b && b.teams) {
-        for (const t of b.teams) {
-          await syncTeamUpsert(t, bId);
-        }
-      }
-    }
-    lastSupabaseSyncTime = new Date().toISOString();
-  } catch (err) {
-    console.error('⚡ Error saving all to Supabase:', err.message);
-  }
-}
-
-// Unified helper to save data (Supabase primary, Vercel Blob secondary)
-async function saveData(data) {
-  const tasks = [];
-  if (supabase) {
-    tasks.push(saveAllToSupabase());
-  }
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    tasks.push(triggerBlobSync(data));
-  }
-  await Promise.allSettled(tasks);
-}
-
-// Background sync to Vercel Blob Storage
-async function triggerBlobSync(data) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
-
-  try {
-    const jsonString = JSON.stringify(data, null, 2);
-    const blob = await put(BLOB_FILENAME, jsonString, {
-      access: 'public',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: 'application/json'
-    });
-    latestBlobUrl = blob.url;
-    lastBlobSyncTime = new Date().toISOString();
-
-    if (io) {
-      io.emit('blob_status_updated', {
-        enabled: true,
-        url: latestBlobUrl,
-        lastSync: lastBlobSyncTime
-      });
-    }
-    return blob;
-  } catch (err) {
-    console.error('☁️ Gagal sinkronisasi ke Vercel Blob:', err.message);
-    throw err;
-  }
-}
-
-// Inisialisasi pemuatan data dari Vercel Blob Storage
-let lastCloudFetchTime = 0;
-async function initCloudBlob(force = false) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return;
-  }
-
-  const now = Date.now();
-  if (!force && now - lastCloudFetchTime < 1000) {
-    return;
-  }
-  lastCloudFetchTime = now;
-
-  try {
-    if (latestBlobUrl) {
-      try {
-        const res = await fetch(`${latestBlobUrl}?t=${now}`, { cache: 'no-store' });
-        if (res.ok) {
-          const cloudData = await res.json();
-          if (cloudData && cloudData.boards) {
-            state = {
-              passphrase: cloudData.passphrase || DEFAULT_PASSPHRASE,
-              settings: { ...DEFAULT_DATA.settings, ...(cloudData.settings || {}) },
-              boards: {
-                "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(cloudData.boards ? cloudData.boards["1"] : {}) },
-                "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
-              }
-            };
-            return;
-          }
-        }
-      } catch (e) {
-        // Fallback to list()
-      }
-    }
-
-    const { blobs } = await list({ prefix: BLOB_FILENAME });
-    const existingBlob = blobs.find(b => b.pathname === BLOB_FILENAME || b.pathname.endsWith('leaderboard.json'));
-
-    if (existingBlob) {
-      latestBlobUrl = existingBlob.url;
-      lastBlobSyncTime = existingBlob.uploadedAt ? new Date(existingBlob.uploadedAt).toISOString() : new Date().toISOString();
-
-      const res = await fetch(`${existingBlob.url}?t=${Date.now()}`, { cache: 'no-store' });
-      if (res.ok) {
-        const cloudData = await res.json();
-        if (cloudData && cloudData.boards) {
-          state = {
-            passphrase: cloudData.passphrase || DEFAULT_PASSPHRASE,
-            settings: { ...DEFAULT_DATA.settings, ...(cloudData.settings || {}) },
-            boards: {
-              "1": { ...createDefaultBoard("1", "Leaderboard 1", "Kategori / Lintasan 1"), ...(cloudData.boards ? cloudData.boards["1"] : {}) },
-              "2": { ...createDefaultBoard("2", "Leaderboard 2", "Kategori / Lintasan 2"), ...(cloudData.boards ? cloudData.boards["2"] : {}) }
-            }
-          };
-          if (io) io.emit('leaderboard_updated', getFullDataResponse());
-        }
-      }
-    } else {
-      await triggerBlobSync(state);
-    }
-  } catch (err) {
-    console.error('☁️ Error sinkronisasi Vercel Blob:', err.message);
+  } finally {
+    lastAnyWriteAt = Date.now();
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
   }
 }
 
@@ -387,9 +383,10 @@ function calculateTotalMs(minutes, seconds, milliseconds) {
 
 // Formatting helper: returns "01:25.450"
 function formatTime(totalMs) {
-  const m = Math.floor(totalMs / 60000);
-  const s = Math.floor((totalMs % 60000) / 1000);
-  const ms = totalMs % 1000;
+  const safeMs = Math.max(0, Math.round(totalMs || 0));
+  const m = Math.floor(safeMs / 60000);
+  const s = Math.floor((safeMs % 60000) / 1000);
+  const ms = safeMs % 1000;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 }
 
@@ -423,6 +420,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Passphrase Auth Middleware for Protected Routes
 async function requirePassphrase(req, res, next) {
+  await ensureInitialized();
   const clientPass = String(req.headers['x-passphrase'] || req.query.passphrase || req.body?.passphrase || '').trim();
   let authoritativePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
 
@@ -443,22 +441,6 @@ async function requirePassphrase(req, res, next) {
   next();
 }
 
-// Cloud Sync Middleware for API calls (Serverless compatibility)
-app.use(async (req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    try {
-      if (supabase) {
-        await loadDataFromSupabase();
-      } else {
-        await initCloudBlob();
-      }
-    } catch (e) {
-      // Continue even if cloud sync is temporarily unavailable
-    }
-  }
-  next();
-});
-
 // Specific routes for views
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -478,19 +460,39 @@ app.get('/change-password', (req, res) => {
 
 // Helper to get full sanitized response
 function getFullDataResponse() {
+  const now = Date.now();
   const boardsResponse = {};
   for (const bId of ['1', '2']) {
     const b = state.boards[bId];
     if (b) {
+      let isRunning = !!b.timer?.isRunning;
+      let startedAt = b.timer?.startedAt || null;
+      let targetEndTime = b.timer?.targetEndTime || null;
       let liveRemainingMs = b.timer?.remainingMs !== undefined ? b.timer.remainingMs : 180000;
-      if (b.timer?.isRunning && b.timer?.targetEndTime) {
-        liveRemainingMs = Math.max(0, Number(b.timer.targetEndTime) - Date.now());
+
+      if (isRunning && targetEndTime) {
+        liveRemainingMs = Math.max(0, Number(targetEndTime) - now);
+        if (liveRemainingMs <= 0) {
+          isRunning = false;
+          liveRemainingMs = 0;
+          startedAt = null;
+          targetEndTime = null;
+          b.timer.isRunning = false;
+          b.timer.remainingMs = 0;
+          b.timer.startedAt = null;
+          b.timer.targetEndTime = null;
+        }
       }
+
       boardsResponse[bId] = {
         ...b,
         timer: {
           ...b.timer,
-          remainingMs: liveRemainingMs
+          isRunning,
+          startedAt,
+          targetEndTime,
+          remainingMs: liveRemainingMs,
+          updatedAt: lastBoardTimerWriteAt[bId] || now
         },
         teams: getRankedTeams(b.teams)
       };
@@ -498,17 +500,13 @@ function getFullDataResponse() {
   }
 
   return {
+    serverTime: now,
     settings: state.settings,
     boards: boardsResponse,
     supabase: {
       enabled: !!supabase,
       url: SUPABASE_URL,
       lastSync: lastSupabaseSyncTime
-    },
-    blob: {
-      enabled: !!process.env.BLOB_READ_WRITE_TOKEN,
-      url: latestBlobUrl,
-      lastSync: lastBlobSyncTime
     }
   };
 }
@@ -527,7 +525,7 @@ if (!process.env.VERCEL) {
           board.timer.startedAt = null;
           board.timer.targetEndTime = null;
           changed = true;
-          await syncBoardUpdate(bId);
+          await syncBoardTimer(bId);
           if (io) io.emit('timer_finished', { boardId: bId });
         }
       }
@@ -536,7 +534,6 @@ if (!process.env.VERCEL) {
     if (changed) {
       const fullData = getFullDataResponse();
       if (io) io.emit('leaderboard_updated', fullData);
-      saveData(state);
     }
   }, 500);
 }
@@ -552,7 +549,6 @@ const handleLogin = async (req, res) => {
     return res.status(400).json({ error: 'Passphrase tidak boleh kosong.' });
   }
 
-  // 1. Selalu prioritaskan pembacaan passphrase terbaru langsung dari database Supabase
   let authoritativePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
   if (supabase) {
     try {
@@ -587,7 +583,6 @@ const handleChangePassword = async (req, res) => {
   const currentPassword = String(req.body?.currentPassword || '').trim();
   const newPassword = String(req.body?.newPassword || '').trim();
 
-  // Validasi dari database Supabase
   let activePass = String(state.passphrase || DEFAULT_PASSPHRASE).trim();
   if (supabase) {
     try {
@@ -621,7 +616,6 @@ const handleChangePassword = async (req, res) => {
 
   state.passphrase = newPassword;
   await syncSettingsUpdate();
-  await saveData(state);
 
   res.json({ success: true, message: 'Password admin berhasil diperbarui!' });
 };
@@ -630,7 +624,8 @@ app.post('/api/auth/change-password', handleChangePassword);
 app.post('/auth/change-password', handleChangePassword);
 
 // 2. Get current state (public)
-app.get('/api/data', (req, res) => {
+app.get('/api/data', async (req, res) => {
+  await loadDataFromSupabase();
   res.json(getFullDataResponse());
 });
 
@@ -662,7 +657,6 @@ app.post('/api/teams', requirePassphrase, async (req, res) => {
 
   board.teams.push(newTeam);
   await syncTeamUpsert(newTeam, boardId);
-  await saveData(state);
 
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
@@ -699,7 +693,6 @@ app.put('/api/teams/:id', requirePassphrase, async (req, res) => {
   board.teams[teamIndex].updatedAt = new Date().toISOString();
 
   await syncTeamUpsert(board.teams[teamIndex], boardId);
-  await saveData(state);
 
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
@@ -716,15 +709,9 @@ app.delete('/api/teams/:id', requirePassphrase, async (req, res) => {
     return res.status(400).json({ error: 'Leaderboard tidak valid.' });
   }
 
-  const initialLength = board.teams.length;
   board.teams = board.teams.filter(t => t.id !== id);
-
-  if (board.teams.length === initialLength) {
-    return res.status(404).json({ error: 'Kelompok tidak ditemukan.' });
-  }
-
   await syncTeamDelete(id);
-  await saveData(state);
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
@@ -741,7 +728,6 @@ app.post('/api/teams/reset', requirePassphrase, async (req, res) => {
 
   board.teams = [];
   await syncTeamsReset(boardId);
-  await saveData(state);
 
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
@@ -749,18 +735,19 @@ app.post('/api/teams/reset', requirePassphrase, async (req, res) => {
   res.json({ success: true, message: `Data ${board.name} berhasil direset.` });
 });
 
-// 7. Timer Controls (Protected)
+// 7. Timer Controls (Protected - Atomic & Deterministic)
 app.post('/api/timer/control', requirePassphrase, async (req, res) => {
   const { boardId = '1', action, durationSeconds, title, teamA, teamB, clientRemainingMs } = req.body;
-  const board = state.boards[String(boardId)];
+  const bId = String(boardId);
+  const board = state.boards[bId];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
-  // Retain / update match team names if passed
   if (!board.activeMatch) board.activeMatch = { teamA: '', teamB: '' };
   if (teamA !== undefined) board.activeMatch.teamA = teamA.trim();
   if (teamB !== undefined) board.activeMatch.teamB = teamB.trim();
 
   const timer = board.timer;
+  const now = Date.now();
   const totalMs = (timer.durationSeconds || 180) * 1000;
 
   if (action === 'setup') {
@@ -774,26 +761,32 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
       timer.targetEndTime = null;
     }
   } else if (action === 'start') {
-    if (!timer.isRunning) {
-      if (timer.remainingMs <= 0 || timer.remainingMs > totalMs) {
-        timer.remainingMs = totalMs;
-      }
-      timer.isRunning = true;
-      timer.startedAt = Date.now();
-      timer.targetEndTime = Date.now() + timer.remainingMs;
-      if (io) io.emit('timer_started', { boardId });
-    }
-  } else if (action === 'pause') {
-    if (timer.isRunning) {
-      let rem = timer.targetEndTime ? Math.max(0, timer.targetEndTime - Date.now()) : timer.remainingMs;
-      if (typeof clientRemainingMs === 'number' && clientRemainingMs >= 0 && Math.abs(clientRemainingMs - rem) < 2500) {
-        rem = clientRemainingMs;
+    // Check if timer is genuinely still running with time left
+    const currentlyRunning = timer.isRunning && timer.targetEndTime && (timer.targetEndTime - now > 200);
+    if (!currentlyRunning) {
+      let rem = totalMs;
+      if (typeof clientRemainingMs === 'number' && clientRemainingMs > 0 && clientRemainingMs <= totalMs) {
+        rem = Math.round(clientRemainingMs);
+      } else if (!timer.isRunning && timer.remainingMs > 0 && timer.remainingMs <= totalMs) {
+        rem = Math.round(timer.remainingMs);
       }
       timer.remainingMs = rem;
-      timer.isRunning = false;
-      timer.startedAt = null;
-      timer.targetEndTime = null;
+      timer.isRunning = true;
+      timer.startedAt = now;
+      timer.targetEndTime = now + rem;
+      if (io) io.emit('timer_started', { boardId: bId });
     }
+  } else if (action === 'pause') {
+    let rem = timer.remainingMs;
+    if (typeof clientRemainingMs === 'number' && clientRemainingMs >= 0 && clientRemainingMs <= totalMs) {
+      rem = Math.round(clientRemainingMs);
+    } else if (timer.isRunning && timer.targetEndTime) {
+      rem = Math.max(0, Math.round(timer.targetEndTime - now));
+    }
+    timer.remainingMs = Math.max(0, Math.min(totalMs, rem));
+    timer.isRunning = false;
+    timer.startedAt = null;
+    timer.targetEndTime = null;
   } else if (action === 'reset') {
     timer.isRunning = false;
     timer.remainingMs = totalMs;
@@ -801,20 +794,25 @@ app.post('/api/timer/control', requirePassphrase, async (req, res) => {
     timer.targetEndTime = null;
   }
 
+  // Persist to Supabase BEFORE returning so Vercel Serverless & subsequent polls always have the true state
+  await syncBoardTimer(bId);
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
-  // Send response immediately (<15ms) so UI feels instant
-  res.json({ success: true, timer: fullData.boards[String(boardId)].timer, activeMatch: board.activeMatch });
-
-  // Sync to database asynchronously in background
-  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate background:', err.message));
+  res.json({
+    success: true,
+    serverTime: Date.now(),
+    timer: fullData.boards[bId].timer,
+    activeMatch: board.activeMatch
+  });
 });
 
 // 8. Setup Active Battle Teams (Protected)
 app.post('/api/match/setup', requirePassphrase, async (req, res) => {
   const { boardId = '1', teamA, teamB } = req.body;
-  const board = state.boards[String(boardId)];
+  const bId = String(boardId);
+  const board = state.boards[bId];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
   board.activeMatch = {
@@ -822,17 +820,18 @@ app.post('/api/match/setup', requirePassphrase, async (req, res) => {
     teamB: (teamB || '').trim()
   };
 
+  await syncBoardMatch(bId);
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, activeMatch: board.activeMatch });
-
-  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate in match setup:', err.message));
 });
 
 // 9. Record Time directly from Timer for Active Team (Protected)
 app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
-  const { boardId = '1', teamType, teamName, teamA, teamB } = req.body; // teamType: 'A' or 'B'
-  const board = state.boards[String(boardId)];
+  const { boardId = '1', teamType, teamName, teamA, teamB, clientElapsedMs } = req.body;
+  const bId = String(boardId);
+  const board = state.boards[bId];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
   if (!board.activeMatch) board.activeMatch = { teamA: '', teamB: '' };
@@ -844,26 +843,25 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
     return res.status(400).json({ error: 'Nama kelompok belum diatur.' });
   }
 
-  // Ensure activeMatch preserves the team name
   if (teamType === 'A') board.activeMatch.teamA = finalName;
   if (teamType === 'B') board.activeMatch.teamB = finalName;
 
-  // Calculate elapsed time (Timestamp-based Single Source of Truth)
   const totalDurationMs = (board.timer.durationSeconds || 180) * 1000;
   let elapsedMs;
-  if (board.timer.isRunning && board.timer.targetEndTime) {
+  if (typeof clientElapsedMs === 'number' && clientElapsedMs > 0 && clientElapsedMs <= totalDurationMs) {
+    elapsedMs = Math.round(clientElapsedMs);
+  } else if (board.timer.isRunning && board.timer.targetEndTime) {
     const remaining = Math.max(0, board.timer.targetEndTime - Date.now());
     elapsedMs = totalDurationMs - remaining;
   } else {
     elapsedMs = totalDurationMs - (board.timer.remainingMs !== undefined ? board.timer.remainingMs : totalDurationMs);
   }
-  if (elapsedMs <= 0) elapsedMs = 500; // minimum fallback
+  if (elapsedMs <= 0) elapsedMs = 500;
 
   const minutes = Math.floor(elapsedMs / 60000);
   const seconds = Math.floor((elapsedMs % 60000) / 1000);
-  const milliseconds = elapsedMs % 1000;
+  const milliseconds = Math.round(elapsedMs % 1000);
 
-  // Check if team with same name already exists in this board, update it or add new
   const existingIndex = board.teams.findIndex(t => t.name.toLowerCase() === finalName.toLowerCase());
   let savedTeam;
 
@@ -887,7 +885,11 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
     board.teams.push(savedTeam);
   }
 
-  // Fast response
+  await Promise.all([
+    syncTeamUpsert(savedTeam, bId),
+    syncBoardMatch(bId)
+  ]);
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
@@ -898,27 +900,26 @@ app.post('/api/match/record-time', requirePassphrase, async (req, res) => {
     elapsedMs,
     formattedTime: formatTime(elapsedMs)
   });
-
-  // Sync team and board to DB in background
-  syncTeamUpsert(savedTeam, boardId).catch(err => console.error('⚡ Error syncTeamUpsert:', err.message));
-  syncBoardUpdate(boardId).catch(err => console.error('⚡ Error syncBoardUpdate in record-time:', err.message));
 });
 
 // 10. Update board settings / titles (Protected)
 app.post('/api/boards/settings', requirePassphrase, async (req, res) => {
   const { boardId = '1', name, subtitle, eventName, eventSubtitle } = req.body;
+  const bId = String(boardId);
   if (eventName) state.settings.eventName = eventName.trim();
   if (eventSubtitle !== undefined) state.settings.subTitle = eventSubtitle.trim();
 
-  const board = state.boards[String(boardId)];
+  const board = state.boards[bId];
   if (board) {
     if (name) board.name = name.trim();
     if (subtitle !== undefined) board.subtitle = subtitle.trim();
   }
 
-  await syncSettingsUpdate();
-  await syncBoardUpdate(boardId);
-  await saveData(state);
+  await Promise.all([
+    syncSettingsUpdate(),
+    syncBoardInfo(bId)
+  ]);
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
   res.json({ success: true, fullData });
@@ -927,10 +928,11 @@ app.post('/api/boards/settings', requirePassphrase, async (req, res) => {
 // 11. Demo data populate (Protected)
 app.post('/api/demo-data', requirePassphrase, async (req, res) => {
   const { boardId = '1' } = req.body;
-  const board = state.boards[String(boardId)];
+  const bId = String(boardId);
+  const board = state.boards[bId];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
-  const sampleTeams = boardId === '1' ? [
+  const sampleTeams = bId === '1' ? [
     { name: "Tim Harimau (Jalur A)", minutes: 1, seconds: 12, milliseconds: 450 },
     { name: "Tim Rajawali (Jalur B)", minutes: 1, seconds: 18, milliseconds: 920 },
     { name: "Tim Komodo (Jalur A)", minutes: 1, seconds: 25, milliseconds: 100 },
@@ -938,7 +940,7 @@ app.post('/api/demo-data', requirePassphrase, async (req, res) => {
     { name: "Tim Kancil Cepat", minutes: 1, seconds: 42, milliseconds: 650 }
   ] : [
     { name: "Tim Singa Perkasa", minutes: 0, seconds: 58, milliseconds: 200 },
-    { name: "Tim Macan Tutul", minutes: 1, seconds: 05, milliseconds: 750 },
+    { name: "Tim Macan Tutul", minutes: 1, seconds: 5, milliseconds: 750 },
     { name: "Tim Garuda Emas", minutes: 1, seconds: 15, milliseconds: 300 },
     { name: "Tim Banteng Merah", minutes: 1, seconds: 22, milliseconds: 110 }
   ];
@@ -953,11 +955,9 @@ app.post('/api/demo-data', requirePassphrase, async (req, res) => {
     createdAt: new Date(Date.now() + i * 1000).toISOString()
   }));
 
-  await syncTeamsReset(boardId);
-  for (const t of board.teams) {
-    await syncTeamUpsert(t, boardId);
-  }
-  await saveData(state);
+  await syncTeamsReset(bId);
+  await Promise.all(board.teams.map(t => syncTeamUpsert(t, bId)));
+
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
@@ -965,7 +965,8 @@ app.post('/api/demo-data', requirePassphrase, async (req, res) => {
 });
 
 // 12. Export CSV (Public or panitia)
-app.get('/api/export-csv', (req, res) => {
+app.get('/api/export-csv', async (req, res) => {
+  await ensureInitialized();
   const { boardId = '1' } = req.query;
   const board = state.boards[String(boardId)];
   if (!board) return res.status(400).send('Leaderboard tidak ditemukan');
@@ -990,7 +991,8 @@ app.get('/api/export-csv', (req, res) => {
 // 13. Import CSV (Protected)
 app.post('/api/import-csv', requirePassphrase, async (req, res) => {
   const { boardId = '1', teams, mode } = req.body;
-  const board = state.boards[String(boardId)];
+  const bId = String(boardId);
+  const board = state.boards[bId];
   if (!board) return res.status(400).json({ error: 'Leaderboard tidak valid.' });
 
   if (!Array.isArray(teams) || teams.length === 0) {
@@ -1014,73 +1016,26 @@ app.post('/api/import-csv', requirePassphrase, async (req, res) => {
 
   if (mode === 'replace') {
     board.teams = validTeams;
-    await syncTeamsReset(boardId);
+    await syncTeamsReset(bId);
   } else {
     board.teams = [...board.teams, ...validTeams];
   }
 
-  for (const t of validTeams) {
-    await syncTeamUpsert(t, boardId);
-  }
+  await Promise.all(validTeams.map(t => syncTeamUpsert(t, bId)));
 
-  await saveData(state);
   const fullData = getFullDataResponse();
   if (io) io.emit('leaderboard_updated', fullData);
 
   res.json({ success: true, count: validTeams.length, fullData });
 });
 
-// 12. Supabase Storage Status & Manual Sync
+// 14. Supabase Storage Status
 app.get('/api/supabase/status', (req, res) => {
   res.json({
     enabled: !!supabase,
     url: SUPABASE_URL,
     lastSync: lastSupabaseSyncTime
   });
-});
-
-app.post('/api/supabase/sync', requirePassphrase, async (req, res) => {
-  if (!supabase) {
-    return res.status(400).json({ error: 'Supabase tidak terkonfigurasi di server.' });
-  }
-  try {
-    await saveAllToSupabase();
-    res.json({
-      success: true,
-      message: 'Data berhasil disinkronkan ke Supabase Database!',
-      lastSync: lastSupabaseSyncTime
-    });
-  } catch (err) {
-    res.status(500).json({ error: `Gagal sinkronisasi Supabase: ${err.message}` });
-  }
-});
-
-// 13. Vercel Blob Storage Status
-app.get('/api/blob/status', (req, res) => {
-  res.json({
-    enabled: !!process.env.BLOB_READ_WRITE_TOKEN,
-    url: latestBlobUrl,
-    lastSync: lastBlobSyncTime,
-    pathname: BLOB_FILENAME
-  });
-});
-
-// 13. Manual Sync to Vercel Blob Storage (Protected)
-app.post('/api/blob/sync', requirePassphrase, async (req, res) => {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return res.status(400).json({ error: 'BLOB_READ_WRITE_TOKEN tidak terkonfigurasi di server.' });
-  }
-  try {
-    await triggerBlobSync(state);
-    res.json({
-      success: true,
-      message: 'Data berhasil disinkronkan ke Vercel Blob Storage!',
-      url: latestBlobUrl,
-      lastSync: lastBlobSyncTime
-    });
-  } catch (err) {
-    res.status(500).json({ error: `Gagal sinkronisasi: ${err.message}` });
-  }
 });
 
 // Socket.io connection handling
@@ -1100,19 +1055,14 @@ if (require.main === module && !process.env.VERCEL) {
     console.log(`⚙️  Panel Panitia 2           : http://localhost:${PORT}/admin?board=2`);
     console.log(`🔑 Ganti Password            : http://localhost:${PORT}/change-password`);
     console.log(`⚡ Supabase Database         : ${supabase ? 'Aktif (' + SUPABASE_URL + ')' : 'Tidak aktif'}`);
-    console.log(`☁️ Vercel Blob Storage       : ${process.env.BLOB_READ_WRITE_TOKEN ? 'Aktif' : 'Tidak aktif (Lokal)'}`);
     console.log(`====================================================`);
 
-    // Inisialisasi pemuatan data dari cloud (Supabase diprioritaskan)
     if (supabase) {
       loadDataFromSupabase(true).then(() => {
         console.log(`⚡ Supabase data initialized successfully.`);
       }).catch(err => {
         console.error(`⚡ Gagal inisialisasi Supabase:`, err.message);
-        initCloudBlob();
       });
-    } else {
-      initCloudBlob();
     }
   });
 }

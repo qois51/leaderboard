@@ -27,6 +27,14 @@ let globalData = null;
 let activeBoardId = '1';
 let searchQuery = '';
 let parsedCsvData = [];
+let serverClockOffset = 0;
+let pendingTimerControl = 0;
+const lastTimerMutationAt = { '1': 0, '2': 0 };
+let realtimeChannel = null;
+
+function getSyncedNow() {
+  return Date.now() + serverClockOffset;
+}
 
 // DOM Elements - Auth
 const authOverlay = document.getElementById('authOverlay');
@@ -288,8 +296,13 @@ function renderAdminView() {
     const totalDurationMs = (currentBoard.timer.durationSeconds || 180) * 1000;
     let liveRemainingMs = currentBoard.timer.remainingMs;
     if (currentBoard.timer.isRunning && currentBoard.timer.targetEndTime) {
-      liveRemainingMs = Math.max(0, currentBoard.timer.targetEndTime - Date.now());
+      liveRemainingMs = Math.max(0, currentBoard.timer.targetEndTime - getSyncedNow());
       currentBoard.timer.remainingMs = liveRemainingMs;
+      if (liveRemainingMs <= 0) {
+        currentBoard.timer.isRunning = false;
+        currentBoard.timer.startedAt = null;
+        currentBoard.timer.targetEndTime = null;
+      }
     }
 
     adminTimerDigits.textContent = formatMs(liveRemainingMs);
@@ -391,16 +404,23 @@ function handleSearch(val) {
 }
 
 // ========================
-// TIMER CONTROLS (OPTIMISTIC INSTANT FEEDBACK)
+// TIMER CONTROLS (OPTIMISTIC INSTANT FEEDBACK + REALTIME BROADCAST)
 // ========================
 async function controlTimer(action) {
+  const bId = activeBoardId;
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
-  localMatchTeams[activeBoardId].teamA = teamA;
-  localMatchTeams[activeBoardId].teamB = teamB;
+  localMatchTeams[bId].teamA = teamA;
+  localMatchTeams[bId].teamB = teamB;
 
-  const board = (globalData && globalData.boards) ? globalData.boards[activeBoardId] : null;
+  clearTimeout(saveMatchTimeout);
+
+  const board = (globalData && globalData.boards) ? globalData.boards[bId] : null;
   let clientRemainingMs = undefined;
+  const now = getSyncedNow();
+
+  pendingTimerControl++;
+  lastTimerMutationAt[bId] = Date.now();
 
   // Optimistic local state update (0ms immediate reaction)
   if (board && board.timer) {
@@ -410,38 +430,66 @@ async function controlTimer(action) {
         if (board.timer.remainingMs <= 0 || board.timer.remainingMs > totalMs) {
           board.timer.remainingMs = totalMs;
         }
+        clientRemainingMs = Math.round(board.timer.remainingMs);
         board.timer.isRunning = true;
-        board.timer.startedAt = Date.now();
-        board.timer.targetEndTime = Date.now() + board.timer.remainingMs;
+        board.timer.startedAt = now;
+        board.timer.targetEndTime = now + clientRemainingMs;
+      } else {
+        clientRemainingMs = Math.max(0, Math.round((board.timer.targetEndTime || now) - now));
       }
     } else if (action === 'pause') {
-      if (board.timer.isRunning) {
-        const curRem = board.timer.targetEndTime ? Math.max(0, board.timer.targetEndTime - Date.now()) : board.timer.remainingMs;
-        board.timer.remainingMs = curRem;
-        clientRemainingMs = curRem;
-        board.timer.isRunning = false;
-        board.timer.startedAt = null;
-        board.timer.targetEndTime = null;
-      }
+      const curRem = (board.timer.isRunning && board.timer.targetEndTime)
+        ? Math.max(0, Math.round(board.timer.targetEndTime - now))
+        : Math.round(board.timer.remainingMs || 0);
+      board.timer.remainingMs = curRem;
+      clientRemainingMs = curRem;
+      board.timer.isRunning = false;
+      board.timer.startedAt = null;
+      board.timer.targetEndTime = null;
     } else if (action === 'reset') {
       board.timer.isRunning = false;
       board.timer.remainingMs = totalMs;
+      clientRemainingMs = totalMs;
       board.timer.startedAt = null;
       board.timer.targetEndTime = null;
     }
+    board.activeMatch = { teamA, teamB };
     renderAdminView();
+
+    // Instant peer-to-peer WebSocket broadcast via Supabase Realtime (<25ms)
+    if (realtimeChannel) {
+      realtimeChannel.send({
+        type: 'broadcast',
+        event: 'timer_sync',
+        payload: {
+          boardId: bId,
+          timer: { ...board.timer },
+          activeMatch: { teamA, teamB },
+          sentAt: now
+        }
+      }).catch(() => {});
+    }
   }
 
   try {
     const res = await fetch('/api/timer/control', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ boardId: activeBoardId, action, teamA, teamB, clientRemainingMs })
+      body: JSON.stringify({ boardId: bId, action, teamA, teamB, clientRemainingMs })
     });
     if (res.ok) {
       const data = await res.json();
+      if (data && data.serverTime) {
+        serverClockOffset = data.serverTime - Date.now();
+      }
+      lastTimerMutationAt[bId] = Date.now();
       if (data && data.timer && board) {
-        board.timer = data.timer;
+        board.timer = {
+          ...data.timer,
+          remainingMs: (data.timer.isRunning && data.timer.targetEndTime)
+            ? Math.max(0, data.timer.targetEndTime - getSyncedNow())
+            : data.timer.remainingMs
+        };
         renderAdminView();
       }
     } else {
@@ -450,6 +498,9 @@ async function controlTimer(action) {
     }
   } catch (e) {
     showToast('Terjadi kesalahan jaringan', 'error');
+  } finally {
+    lastTimerMutationAt[bId] = Date.now();
+    pendingTimerControl = Math.max(0, pendingTimerControl - 1);
   }
 }
 
@@ -466,18 +517,46 @@ function toggleTimerSetupModal() {
 
 async function handleSaveTimerSetup(e) {
   e.preventDefault();
+  const bId = activeBoardId;
   const title = setupTimerTitle.value.trim();
   const min = parseInt(setupTimerMin.value, 10) || 0;
   const sec = parseInt(setupTimerSec.value, 10) || 0;
-  const durationSeconds = (min * 60) + sec;
+  const durationSeconds = Math.max(1, (min * 60) + sec);
   const teamA = matchInputTeamA.value.trim();
   const teamB = matchInputTeamB.value.trim();
+
+  pendingTimerControl++;
+  lastTimerMutationAt[bId] = Date.now();
+
+  const board = (globalData && globalData.boards) ? globalData.boards[bId] : null;
+  if (board && board.timer) {
+    board.timer.title = title || 'WAKTU PERTANDINGAN';
+    board.timer.durationSeconds = durationSeconds;
+    board.timer.remainingMs = durationSeconds * 1000;
+    board.timer.isRunning = false;
+    board.timer.startedAt = null;
+    board.timer.targetEndTime = null;
+    renderAdminView();
+
+    if (realtimeChannel) {
+      realtimeChannel.send({
+        type: 'broadcast',
+        event: 'timer_sync',
+        payload: {
+          boardId: bId,
+          timer: { ...board.timer },
+          activeMatch: { teamA, teamB },
+          sentAt: getSyncedNow()
+        }
+      }).catch(() => {});
+    }
+  }
 
   try {
     const res = await fetch('/api/timer/control', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ boardId: activeBoardId, action: 'setup', title, durationSeconds, teamA, teamB })
+      body: JSON.stringify({ boardId: bId, action: 'setup', title, durationSeconds, teamA, teamB })
     });
     if (res.ok) {
       showToast('Setup timer berhasil disimpan!');
@@ -485,6 +564,9 @@ async function handleSaveTimerSetup(e) {
     }
   } catch (e) {
     showToast('Gagal menyimpan setup timer', 'error');
+  } finally {
+    lastTimerMutationAt[bId] = Date.now();
+    pendingTimerControl = Math.max(0, pendingTimerControl - 1);
   }
 }
 
@@ -555,11 +637,21 @@ async function recordTimeFromTimer(teamType) {
   localMatchTeams[activeBoardId].teamA = teamA;
   localMatchTeams[activeBoardId].teamB = teamB;
 
+  const board = (globalData && globalData.boards) ? globalData.boards[activeBoardId] : null;
+  let clientElapsedMs = undefined;
+  if (board && board.timer) {
+    const totalMs = (board.timer.durationSeconds || 180) * 1000;
+    const rem = (board.timer.isRunning && board.timer.targetEndTime)
+      ? Math.max(0, board.timer.targetEndTime - getSyncedNow())
+      : (board.timer.remainingMs !== undefined ? board.timer.remainingMs : totalMs);
+    clientElapsedMs = Math.max(1, Math.round(totalMs - rem));
+  }
+
   try {
     const res = await fetch('/api/match/record-time', {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ boardId: activeBoardId, teamType, teamName, teamA, teamB })
+      body: JSON.stringify({ boardId: activeBoardId, teamType, teamName, teamA, teamB, clientElapsedMs })
     });
     const result = await res.json();
     if (res.ok) {
@@ -925,16 +1017,14 @@ function escapeHtml(str) {
 }
 
 // ========================
-// VERCEL BLOB STORAGE UI & SYNC
+// SUPABASE REALTIME UI STATUS
 // ========================
-function updateBlobUI(blobInfo) {
-  if (!blobInfo) return;
-  const badge = document.getElementById('blobStatusBadge');
-  const syncTime = document.getElementById('blobSyncTime');
-  const urlLink = document.getElementById('blobPublicUrlLink');
+function updateSupabaseUI(sbInfo) {
+  const badge = document.getElementById('supabaseStatusBadge');
+  const syncTime = document.getElementById('supabaseSyncTime');
 
   if (badge) {
-    if (blobInfo.enabled) {
+    if (sbInfo && sbInfo.enabled) {
       badge.textContent = 'TERHUBUNG';
       badge.className = 'px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold';
     } else {
@@ -943,104 +1033,146 @@ function updateBlobUI(blobInfo) {
     }
   }
 
-  if (syncTime && blobInfo.lastSync) {
-    const d = new Date(blobInfo.lastSync);
+  if (syncTime && sbInfo && sbInfo.lastSync) {
+    const d = new Date(sbInfo.lastSync);
     syncTime.textContent = 'Sync: ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
-
-  if (urlLink) {
-    if (blobInfo.url) {
-      urlLink.href = blobInfo.url;
-      urlLink.classList.remove('pointer-events-none', 'opacity-50');
-    } else {
-      urlLink.classList.add('pointer-events-none', 'opacity-50');
-    }
-  }
 }
 
-async function handleManualBlobSync() {
-  const btn = document.getElementById('btnSyncBlob');
-  if (btn) {
-    btn.disabled = true;
-    btn.classList.add('opacity-50');
-  }
-
-  try {
-    const res = await fetch('/api/blob/sync', {
-      method: 'POST',
-      headers: getAuthHeaders()
-    });
-    const result = await res.json();
-    if (res.ok) {
-      showToast('☁️ Data tersinkron ke Vercel Blob Storage!');
-      updateBlobUI({ enabled: true, url: result.url, lastSync: result.lastSync });
-    } else {
-      showToast(result.error || 'Gagal sinkronisasi cloud', 'error');
-    }
-  } catch (err) {
-    showToast('Terjadi kesalahan koneksi sinkronisasi cloud', 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.classList.remove('opacity-50');
-    }
-  }
-}
-
-// Initial API Fetch & Periodic Polling (Fallback sync)
-async function fetchAdminData() {
+// Initial API Fetch & Non-Destructive Fallback Polling
+async function fetchAdminData(forceTeamsOnly = false) {
+  if (!forceTeamsOnly && pendingTimerControl > 0) return;
+  const pollStartedAt = Date.now();
   try {
     const res = await fetch('/api/data', { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
+    }
+
+    if (!globalData || !globalData.boards) {
       globalData = data;
-      renderAdminView();
-      if (data && data.blob) {
-        updateBlobUI(data.blob);
-      }
+    } else {
+      if (data.settings) globalData.settings = data.settings;
+      if (data.supabase) globalData.supabase = data.supabase;
+
+      ['1', '2'].forEach(bId => {
+        const incomingB = data.boards && data.boards[bId];
+        const localB = globalData.boards[bId];
+        if (!incomingB || !localB) return;
+
+        localB.name = incomingB.name || localB.name;
+        localB.subtitle = incomingB.subtitle || localB.subtitle;
+        localB.teams = incomingB.teams || [];
+
+        // Never overwrite timer if a local/realtime timer action happened recently or is in-flight
+        if (!forceTeamsOnly && pendingTimerControl === 0 && lastTimerMutationAt[bId] < pollStartedAt - 2500) {
+          const incT = incomingB.timer;
+          if (incT) {
+            const sameRunning = localB.timer && localB.timer.isRunning && incT.isRunning &&
+              Math.abs((localB.timer.targetEndTime || 0) - (incT.targetEndTime || 0)) < 1500;
+            if (!sameRunning) {
+              localB.timer = {
+                ...incT,
+                remainingMs: (incT.isRunning && incT.targetEndTime)
+                  ? Math.max(0, incT.targetEndTime - getSyncedNow())
+                  : incT.remainingMs
+              };
+            }
+          }
+          if (incomingB.activeMatch) {
+            localB.activeMatch = incomingB.activeMatch;
+          }
+        }
+      });
+    }
+
+    renderAdminView();
+    if (data && data.supabase) {
+      updateSupabaseUI(data.supabase);
     }
   } catch (e) {
     // Ignore transient network errors
   }
 }
 fetchAdminData();
-setInterval(fetchAdminData, 4000);
+setInterval(() => fetchAdminData(false), 5000);
 
 // Client-side smooth timer calculation (Timestamp-based Single Source of Truth, 33ms loop)
 setInterval(() => {
   if (!globalData || !globalData.boards) return;
-  const board = globalData.boards[activeBoardId];
-  if (board && board.timer && board.timer.isRunning && board.timer.targetEndTime) {
-    const rem = Math.max(0, board.timer.targetEndTime - Date.now());
-    board.timer.remainingMs = rem;
-    adminTimerDigits.textContent = formatMs(rem);
-    if (rem <= 0) {
-      board.timer.isRunning = false;
-      board.timer.remainingMs = 0;
-      board.timer.startedAt = null;
-      board.timer.targetEndTime = null;
-      adminTimerStatus.textContent = 'HABIS';
-      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
-      showToast('⏰ WAKTU HABIS!', 'error');
-    } else {
-      adminTimerStatus.textContent = 'BERJALAN';
-      adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold animate-pulse';
+  const now = getSyncedNow();
+  ['1', '2'].forEach(bId => {
+    const b = globalData.boards[bId];
+    if (b && b.timer && b.timer.isRunning && b.timer.targetEndTime) {
+      const rem = Math.max(0, b.timer.targetEndTime - now);
+      b.timer.remainingMs = rem;
+      if (bId === activeBoardId) {
+        adminTimerDigits.textContent = formatMs(rem);
+      }
+      if (rem <= 0) {
+        b.timer.isRunning = false;
+        b.timer.remainingMs = 0;
+        b.timer.startedAt = null;
+        b.timer.targetEndTime = null;
+        if (bId === activeBoardId) {
+          adminTimerStatus.textContent = 'HABIS';
+          adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-bold';
+          showToast('⏰ WAKTU HABIS!', 'error');
+        }
+      } else if (bId === activeBoardId) {
+        adminTimerStatus.textContent = 'BERJALAN';
+        adminTimerStatus.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-bold animate-pulse';
+      }
     }
-  }
+  });
 }, 33);
 
 // ----------------------------------------------------
-// SUPABASE REALTIME SUBSCRIPTION (Admin Panel PubSub)
+// SUPABASE REALTIME SUBSCRIPTION (Unified Broadcast + Postgres Changes)
 // ----------------------------------------------------
 if (supabaseClient) {
-  supabaseClient
-    .channel('admin_realtime_channel')
+  realtimeChannel = supabaseClient
+    .channel('leaderboard_live_sync', {
+      config: { broadcast: { self: false } }
+    })
+    .on('broadcast', { event: 'timer_sync' }, ({ payload }) => {
+      if (!payload || !globalData || !globalData.boards) return;
+      const bId = String(payload.boardId);
+      const b = globalData.boards[bId];
+      if (!b || !payload.timer) return;
+
+      lastTimerMutationAt[bId] = Date.now();
+      if (payload.activeMatch) {
+        b.activeMatch = payload.activeMatch;
+      }
+
+      const t = payload.timer;
+      b.timer.title = t.title || b.timer.title;
+      b.timer.durationSeconds = t.durationSeconds || b.timer.durationSeconds;
+      b.timer.isRunning = !!t.isRunning;
+      b.timer.startedAt = t.startedAt ? Number(t.startedAt) : null;
+      b.timer.targetEndTime = t.targetEndTime ? Number(t.targetEndTime) : null;
+
+      if (b.timer.isRunning && b.timer.targetEndTime) {
+        b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - getSyncedNow());
+      } else {
+        b.timer.remainingMs = t.remainingMs !== undefined ? Number(t.remainingMs) : b.timer.remainingMs;
+      }
+
+      renderAdminView();
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
       const row = payload.new;
       if (!row || !globalData || !globalData.boards) return;
       const bId = String(row.id);
       const b = globalData.boards[bId];
       if (b) {
+        // Ignore echoed postgres_changes if this client currently has an active control request
+        if (pendingTimerControl > 0) return;
+
+        lastTimerMutationAt[bId] = Date.now();
         b.name = row.name || b.name;
         b.subtitle = row.subtitle || b.subtitle;
         b.activeMatch = {
@@ -1048,22 +1180,22 @@ if (supabaseClient) {
           teamB: row.active_team_b || ''
         };
         b.timer.title = row.timer_title || b.timer.title;
-        b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
+        b.timer.durationSeconds = row.timer_duration_seconds !== null ? Number(row.timer_duration_seconds) : b.timer.durationSeconds;
         b.timer.isRunning = !!row.timer_is_running;
         b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
         b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
 
         if (b.timer.isRunning && b.timer.targetEndTime) {
-          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - Date.now());
+          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - getSyncedNow());
         } else {
-          b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
+          b.timer.remainingMs = row.timer_remaining_ms !== null ? Number(row.timer_remaining_ms) : b.timer.remainingMs;
         }
 
         renderAdminView();
       }
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, async () => {
-      await fetchAdminData();
+      await fetchAdminData(true);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
       const row = payload.new;
@@ -1080,23 +1212,51 @@ if (supabaseClient) {
 // Socket Events (Fallback for local standalone server)
 if (socket) {
   socket.on('initial_data', (data) => {
-    globalData = data;
-    renderAdminView();
-    if (data && data.blob) {
-      updateBlobUI(data.blob);
+    if (data && data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
+    }
+    if (!globalData) {
+      globalData = data;
+      renderAdminView();
+    }
+    if (data && data.supabase) {
+      updateSupabaseUI(data.supabase);
     }
   });
 
   socket.on('leaderboard_updated', (data) => {
-    globalData = data;
-    renderAdminView();
-    if (data && data.blob) {
-      updateBlobUI(data.blob);
+    if (!data || pendingTimerControl > 0) return;
+    if (data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
     }
-  });
-
-  socket.on('blob_status_updated', (payload) => {
-    updateBlobUI(payload);
+    if (!globalData) {
+      globalData = data;
+    } else {
+      if (data.settings) globalData.settings = data.settings;
+      ['1', '2'].forEach(bId => {
+        if (data.boards && data.boards[bId] && globalData.boards[bId]) {
+          const incB = data.boards[bId];
+          const locB = globalData.boards[bId];
+          locB.name = incB.name || locB.name;
+          locB.subtitle = incB.subtitle || locB.subtitle;
+          locB.teams = incB.teams || [];
+          if (incB.activeMatch) locB.activeMatch = incB.activeMatch;
+          if (incB.timer) {
+            lastTimerMutationAt[bId] = Date.now();
+            locB.timer = {
+              ...incB.timer,
+              remainingMs: (incB.timer.isRunning && incB.timer.targetEndTime)
+                ? Math.max(0, incB.timer.targetEndTime - getSyncedNow())
+                : incB.timer.remainingMs
+            };
+          }
+        }
+      });
+    }
+    renderAdminView();
+    if (data && data.supabase) {
+      updateSupabaseUI(data.supabase);
+    }
   });
 
   socket.on('timer_started', () => {

@@ -27,6 +27,12 @@ let globalData = null;
 let activeBoardId = '1'; // '1', '2', or 'split'
 let previousLeaderIds = { '1': null, '2': null };
 let lastPlayedBeepSecond = null;
+let serverClockOffset = 0;
+const lastTimerMutationAt = { '1': 0, '2': 0 };
+
+function getSyncedNow() {
+  return Date.now() + serverClockOffset;
+}
 
 // Parse board from URL params if given (e.g. ?board=2)
 const urlParams = new URLSearchParams(window.location.search);
@@ -166,8 +172,13 @@ function updateTimerDisplay(board) {
   const totalDurationMs = (timer.durationSeconds || 180) * 1000;
   let liveRemaining = timer.remainingMs;
   if (timer.isRunning && timer.targetEndTime) {
-    liveRemaining = Math.max(0, timer.targetEndTime - Date.now());
+    liveRemaining = Math.max(0, timer.targetEndTime - getSyncedNow());
     timer.remainingMs = liveRemaining;
+    if (liveRemaining <= 0) {
+      timer.isRunning = false;
+      timer.startedAt = null;
+      timer.targetEndTime = null;
+    }
   }
 
   timerTitle.textContent = timer.title || 'WAKTU PERTANDINGAN';
@@ -316,12 +327,12 @@ function renderSplitView() {
 
   let b1Rem = b1.timer ? b1.timer.remainingMs : 0;
   if (b1.timer && b1.timer.isRunning && b1.timer.targetEndTime) {
-    b1Rem = Math.max(0, b1.timer.targetEndTime - Date.now());
+    b1Rem = Math.max(0, b1.timer.targetEndTime - getSyncedNow());
     b1.timer.remainingMs = b1Rem;
   }
   let b2Rem = b2.timer ? b2.timer.remainingMs : 0;
   if (b2.timer && b2.timer.isRunning && b2.timer.targetEndTime) {
-    b2Rem = Math.max(0, b2.timer.targetEndTime - Date.now());
+    b2Rem = Math.max(0, b2.timer.targetEndTime - getSyncedNow());
     b2.timer.remainingMs = b2Rem;
   }
 
@@ -389,30 +400,69 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// Initial API Fetch & Periodic Polling (Fallback sync)
-async function fetchDataFromApi() {
+// Initial API Fetch & Non-Destructive Fallback Polling
+async function fetchDataFromApi(forceTeamsOnly = false) {
+  const pollStartedAt = Date.now();
   try {
     const res = await fetch('/api/data', { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
-      globalData = data;
-      renderView();
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
     }
+
+    if (!globalData || !globalData.boards) {
+      globalData = data;
+    } else {
+      if (data.settings) globalData.settings = data.settings;
+
+      ['1', '2'].forEach(bId => {
+        const incB = data.boards && data.boards[bId];
+        const locB = globalData.boards[bId];
+        if (!incB || !locB) return;
+
+        locB.name = incB.name || locB.name;
+        locB.subtitle = incB.subtitle || locB.subtitle;
+        locB.teams = incB.teams || [];
+
+        if (!forceTeamsOnly && lastTimerMutationAt[bId] < pollStartedAt - 2500) {
+          const incT = incB.timer;
+          if (incT) {
+            const sameRunning = locB.timer && locB.timer.isRunning && incT.isRunning &&
+              Math.abs((locB.timer.targetEndTime || 0) - (incT.targetEndTime || 0)) < 1500;
+            if (!sameRunning) {
+              locB.timer = {
+                ...incT,
+                remainingMs: (incT.isRunning && incT.targetEndTime)
+                  ? Math.max(0, incT.targetEndTime - getSyncedNow())
+                  : incT.remainingMs
+              };
+            }
+          }
+          if (incB.activeMatch) {
+            locB.activeMatch = incB.activeMatch;
+          }
+        }
+      });
+    }
+
+    renderView();
   } catch (err) {
     // Ignore transient network errors
   }
 }
 fetchDataFromApi();
-setInterval(fetchDataFromApi, 4000);
+setInterval(() => fetchDataFromApi(false), 5000);
 
 // Client-side smooth timer calculation (Timestamp-based Single Source of Truth, 33ms loop)
 setInterval(() => {
   if (!globalData || !globalData.boards) return;
+  const now = getSyncedNow();
   let hasRunning = false;
   ['1', '2'].forEach(bId => {
     const b = globalData.boards[bId];
     if (b && b.timer && b.timer.isRunning && b.timer.targetEndTime) {
-      const rem = Math.max(0, b.timer.targetEndTime - Date.now());
+      const rem = Math.max(0, b.timer.targetEndTime - now);
       b.timer.remainingMs = rem;
       if (rem <= 0) {
         b.timer.isRunning = false;
@@ -435,11 +485,49 @@ setInterval(() => {
 }, 33);
 
 // ----------------------------------------------------
-// SUPABASE REALTIME SUBSCRIPTION (Direct WebSocket PubSub)
+// SUPABASE REALTIME SUBSCRIPTION (Unified Broadcast + Postgres Changes)
 // ----------------------------------------------------
 if (supabaseClient) {
   supabaseClient
-    .channel('display_realtime_channel')
+    .channel('leaderboard_live_sync', {
+      config: { broadcast: { self: false } }
+    })
+    .on('broadcast', { event: 'timer_sync' }, ({ payload }) => {
+      if (!payload || !globalData || !globalData.boards) return;
+      const bId = String(payload.boardId);
+      const b = globalData.boards[bId];
+      if (!b || !payload.timer) return;
+
+      const wasRunning = b.timer.isRunning;
+      lastTimerMutationAt[bId] = Date.now();
+
+      if (payload.activeMatch) {
+        b.activeMatch = payload.activeMatch;
+      }
+
+      const t = payload.timer;
+      b.timer.title = t.title || b.timer.title;
+      b.timer.durationSeconds = t.durationSeconds || b.timer.durationSeconds;
+      b.timer.isRunning = !!t.isRunning;
+      b.timer.startedAt = t.startedAt ? Number(t.startedAt) : null;
+      b.timer.targetEndTime = t.targetEndTime ? Number(t.targetEndTime) : null;
+
+      if (b.timer.isRunning && b.timer.targetEndTime) {
+        b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - getSyncedNow());
+      } else {
+        b.timer.remainingMs = t.remainingMs !== undefined ? Number(t.remainingMs) : b.timer.remainingMs;
+      }
+
+      if (!wasRunning && b.timer.isRunning) {
+        sounds.playWhistle();
+      }
+
+      if (activeBoardId === bId) {
+        updateTimerDisplay(b);
+      } else if (activeBoardId === 'split') {
+        renderSplitView();
+      }
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'boards' }, (payload) => {
       const row = payload.new;
       if (!row || !globalData || !globalData.boards) return;
@@ -447,6 +535,7 @@ if (supabaseClient) {
       const b = globalData.boards[bId];
       if (b) {
         const wasRunning = b.timer.isRunning;
+        lastTimerMutationAt[bId] = Date.now();
         b.name = row.name || b.name;
         b.subtitle = row.subtitle || b.subtitle;
         b.activeMatch = {
@@ -454,15 +543,15 @@ if (supabaseClient) {
           teamB: row.active_team_b || ''
         };
         b.timer.title = row.timer_title || b.timer.title;
-        b.timer.durationSeconds = row.timer_duration_seconds !== null ? row.timer_duration_seconds : b.timer.durationSeconds;
+        b.timer.durationSeconds = row.timer_duration_seconds !== null ? Number(row.timer_duration_seconds) : b.timer.durationSeconds;
         b.timer.isRunning = !!row.timer_is_running;
         b.timer.startedAt = row.timer_started_at ? Number(row.timer_started_at) : null;
         b.timer.targetEndTime = row.timer_target_end_time ? Number(row.timer_target_end_time) : null;
 
         if (b.timer.isRunning && b.timer.targetEndTime) {
-          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - Date.now());
+          b.timer.remainingMs = Math.max(0, b.timer.targetEndTime - getSyncedNow());
         } else {
-          b.timer.remainingMs = row.timer_remaining_ms !== null ? row.timer_remaining_ms : b.timer.remainingMs;
+          b.timer.remainingMs = row.timer_remaining_ms !== null ? Number(row.timer_remaining_ms) : b.timer.remainingMs;
         }
 
         if (!wasRunning && b.timer.isRunning) {
@@ -477,7 +566,7 @@ if (supabaseClient) {
       }
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, async () => {
-      await fetchDataFromApi();
+      await fetchDataFromApi(true);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
       const row = payload.new;
@@ -498,20 +587,52 @@ if (socket) {
   });
 
   socket.on('initial_data', (data) => {
-    globalData = data;
-    renderView();
+    if (data && data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
+    }
+    if (!globalData) {
+      globalData = data;
+      renderView();
+    }
   });
 
   socket.on('leaderboard_updated', (data) => {
-    globalData = data;
+    if (!data) return;
+    if (data.serverTime) {
+      serverClockOffset = data.serverTime - Date.now();
+    }
+    if (!globalData) {
+      globalData = data;
+    } else {
+      if (data.settings) globalData.settings = data.settings;
+      ['1', '2'].forEach(bId => {
+        if (data.boards && data.boards[bId] && globalData.boards[bId]) {
+          const incB = data.boards[bId];
+          const locB = globalData.boards[bId];
+          locB.name = incB.name || locB.name;
+          locB.subtitle = incB.subtitle || locB.subtitle;
+          locB.teams = incB.teams || [];
+          if (incB.activeMatch) locB.activeMatch = incB.activeMatch;
+          if (incB.timer) {
+            lastTimerMutationAt[bId] = Date.now();
+            locB.timer = {
+              ...incB.timer,
+              remainingMs: (incB.timer.isRunning && incB.timer.targetEndTime)
+                ? Math.max(0, incB.timer.targetEndTime - getSyncedNow())
+                : incB.timer.remainingMs
+            };
+          }
+        }
+      });
+    }
     renderView();
   });
 
-  socket.on('timer_started', (payload) => {
+  socket.on('timer_started', () => {
     sounds.playWhistle();
   });
 
-  socket.on('timer_finished', (payload) => {
+  socket.on('timer_finished', () => {
     sounds.playBuzzer();
   });
 }

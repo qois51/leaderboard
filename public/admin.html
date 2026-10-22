@@ -409,39 +409,14 @@
           </a>
         </div>
 
-        <!-- Vercel Blob Cloud Storage Status & Control -->
+        <!-- Supabase Realtime Database Status -->
         <div class="pt-2 border-t border-gray-800 space-y-1.5">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-bold text-gray-400 flex items-center gap-1.5">
-              <span>☁️ Vercel Blob Storage</span>
-              <span id="blobStatusBadge" class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">AKTIF</span>
+              <span>⚡ Supabase Realtime Database</span>
+              <span id="supabaseStatusBadge" class="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">AKTIF</span>
             </span>
-            <span id="blobSyncTime" class="text-[10px] text-gray-500">-</span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
-            <button 
-              id="btnSyncBlob" 
-              onclick="handleManualBlobSync()" 
-              class="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-blue-300 text-xs font-semibold border border-blue-500/30 flex items-center justify-center gap-1 touch-btn"
-            >
-              <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
-              <span>Sync Cloud</span>
-            </button>
-
-            <a 
-              id="blobPublicUrlLink" 
-              href="#" 
-              target="_blank" 
-              class="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold border border-gray-700 flex items-center justify-center gap-1 touch-btn pointer-events-none opacity-50"
-            >
-              <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-              <span>Buka JSON Cloud</span>
-            </a>
+            <span id="supabaseSyncTime" class="text-[10px] text-gray-500">Realtime Sync</span>
           </div>
         </div>
       </div>
